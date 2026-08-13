@@ -10,36 +10,56 @@
 Classes representing Entites, Architectures, Packades, Modules etc
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from vunit.source_file import SourceFile
+
 
 class DesignUnit(object):
     """
     Represents a generic design unit
     """
 
-    def __init__(self, name, source_file, unit_type):
+    # Declared on the base class so subclasses (Entity, Module) — as well as
+    # duck-typed test doubles — all share the same structural surface. Only
+    # Entity actually populates ``architecture_names``.
+    generic_names: list[str] = []
+    architecture_names: dict[str, str] = {}
+
+    def __init__(self, name: str, source_file: SourceFile, unit_type: str) -> None:
         self.name = name
         self.source_file = source_file
         self.unit_type = unit_type
 
     @property
-    def file_name(self):
+    def file_name(self) -> str:
         return self.source_file.name
 
     @property
-    def original_file_name(self):
+    def original_file_name(self) -> str:
         return self.source_file.original_name
 
     @property
-    def library_name(self):
+    def library_name(self) -> str:
         return self.source_file.library.name
 
     @property
-    def is_entity(self):
+    def is_entity(self) -> bool:
         return False
 
     @property
-    def is_module(self):
+    def is_module(self) -> bool:
         return False
+
+    def set_add_architecture_callback(self, callback: Callable[[], None]) -> None:
+        """
+        Only Entity-like design units support architectures; the default implementation
+        raises so callers that reach this on a non-entity get a clear error.
+        """
+        raise RuntimeError(f"Design unit {self.name!r} is not an entity and has no architectures")
 
 
 class VHDLDesignUnit(DesignUnit):
@@ -49,13 +69,13 @@ class VHDLDesignUnit(DesignUnit):
 
     def __init__(
         self,  # pylint: disable=too-many-arguments
-        name,
-        source_file,
-        unit_type,
+        name: str,
+        source_file: SourceFile,
+        unit_type: str,
         *,
-        is_primary=True,
-        primary_design_unit=None,
-    ):
+        is_primary: bool = True,
+        primary_design_unit: str | None = None,
+    ) -> None:
         DesignUnit.__init__(self, name, source_file, unit_type)
         self.is_primary = is_primary
         self.primary_design_unit = primary_design_unit
@@ -66,34 +86,36 @@ class Entity(VHDLDesignUnit):
     Represents a VHDL Entity
     """
 
-    def __init__(self, name, source_file, generic_names=None):
+    def __init__(
+        self,
+        name: str,
+        source_file: SourceFile,
+        generic_names: list[str] | None = None,
+    ) -> None:
         VHDLDesignUnit.__init__(self, name, source_file, "entity", is_primary=True)
         self.generic_names = [] if generic_names is None else generic_names
-        self._add_architecture_callback = None
-        self._architecture_names = {}
+        self._add_architecture_callback: Callable[[], None] | None = None
+        self.architecture_names = {}
 
-    def add_architecture(self, design_unit):
+    def add_architecture(self, design_unit: VHDLDesignUnit) -> None:
         """
         Add architecture of this entity
         """
-        self._architecture_names[design_unit.name] = design_unit.source_file.name
+        self.architecture_names[design_unit.name] = design_unit.source_file.name
 
         if self._add_architecture_callback is not None:
             self._add_architecture_callback()
 
-    def set_add_architecture_callback(self, callback):
+    def set_add_architecture_callback(self, callback: Callable[[], None]) -> None:
         """
         Set callback to be called when an architecture is added
         """
-        assert self._add_architecture_callback is None
+        if self._add_architecture_callback is not None:
+            raise RuntimeError("add_architecture_callback is already set")
         self._add_architecture_callback = callback
 
     @property
-    def architecture_names(self):
-        return self._architecture_names
-
-    @property
-    def is_entity(self):
+    def is_entity(self) -> bool:
         return True
 
 
@@ -102,10 +124,15 @@ class Module(DesignUnit):
     Represents a Verilog Module
     """
 
-    def __init__(self, name, source_file, generic_names=None):
+    def __init__(
+        self,
+        name: str,
+        source_file: SourceFile,
+        generic_names: list[str] | None = None,
+    ) -> None:
         DesignUnit.__init__(self, name, source_file, "module")
         self.generic_names = [] if generic_names is None else generic_names
 
     @property
-    def is_module(self):
+    def is_module(self) -> bool:
         return True

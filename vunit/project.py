@@ -9,13 +9,18 @@
 """
 Functionality to represent and operate on a HDL code project
 """
-from typing import Optional, Union
+
+from __future__ import annotations
+
+from typing import Callable, Iterable, Iterator
 from pathlib import Path
 import logging
 from collections import OrderedDict
 from vunit.hashing import hash_string
+from vunit.database import PickledDataBase
 from vunit.dependency_graph import DependencyGraph, CircularDependencyException
-from vunit.vhdl_parser import VHDLParser
+from vunit.design_unit import Entity, VHDLDesignUnit
+from vunit.vhdl_parser import VHDLParser, VHDLReference
 from vunit.parsing.verilog.parser import VerilogParser
 from vunit.exceptions import CompileError
 from vunit import ostools
@@ -38,22 +43,26 @@ class Project(object):  # pylint: disable=too-many-instance-attributes
     timestamps and depenencies derived from the design hierarchy.
     """
 
-    def __init__(self, depend_on_package_body=False, database=None):
+    def __init__(
+        self,
+        depend_on_package_body: bool = False,
+        database: PickledDataBase | None = None,
+    ) -> None:
         """
         depend_on_package_body - Package users depend also on package body
         """
         self._database = database
         self._vhdl_parser = VHDLParser(database=self._database)
         self._verilog_parser = VerilogParser(database=self._database)
-        self._libraries = OrderedDict()
+        self._libraries: OrderedDict[str, Library] = OrderedDict()
         # Mapping between library lower case name and real library name
-        self._lower_library_names_dict = {}
-        self._source_files_in_order = []
-        self._manual_dependencies = []
+        self._lower_library_names_dict: dict[str, str] = {}
+        self._source_files_in_order: list[SourceFile] = []
+        self._manual_dependencies: list[tuple[SourceFile, SourceFile]] = []
         self._depend_on_package_body = depend_on_package_body
-        self._builtin_libraries = set(["ieee", "std"])
+        self._builtin_libraries: set[str] = set(["ieee", "std"])
 
-    def _validate_new_library_name(self, library_name):
+    def _validate_new_library_name(self, library_name: str) -> None:
         """
         Check that the library_name is valid or raise RuntimeError
         """
@@ -74,7 +83,7 @@ class Project(object):  # pylint: disable=too-many-instance-attributes
                 f"Library name {self._lower_library_names_dict[lower_name]!r} previously defined"
             )
 
-    def add_builtin_library(self, logical_name):
+    def add_builtin_library(self, logical_name: str) -> None:
         """
         Add a builtin library name that does not give missing dependency warnings
         """
@@ -82,13 +91,13 @@ class Project(object):  # pylint: disable=too-many-instance-attributes
 
     def add_library(
         self,
-        logical_name,
-        directory: Union[str, Path],
+        logical_name: str,
+        directory: str | Path,
         vhdl_standard: VHDLStandard = VHDL.STD_2008,
-        is_external=False,
+        is_external: bool = False,
         *,
-        file_name: Optional[str] = None,
-    ):
+        file_name: str | None = None,
+    ) -> None:
         """
         Add library to project with logical_name located or to be located in directory
         is_external -- Library is assumed to a black-box
@@ -112,15 +121,15 @@ class Project(object):  # pylint: disable=too-many-instance-attributes
 
     def add_source_file(  # pylint: disable=too-many-arguments
         self,
-        file_name,
-        library_name,
+        file_name: str | Path,
+        library_name: str,
         *,
-        file_type="vhdl",
-        include_dirs=None,
-        defines=None,
-        vhdl_standard: Optional[VHDLStandard] = None,
-        no_parse=False,
-    ):
+        file_type: str = "vhdl",
+        include_dirs: list[str] | None = None,
+        defines: dict[str, str] | None = None,
+        vhdl_standard: VHDLStandard | None = None,
+        no_parse: bool = False,
+    ) -> SourceFile:
         """
         Add a file_name as a source file in library_name with file_type
 
@@ -133,9 +142,11 @@ class Project(object):  # pylint: disable=too-many-instance-attributes
         LOGGER.debug("Adding source file %s to library %s", str(fname), library_name)
         library = self._libraries[library_name]
 
+        source_file: SourceFile
         if file_type == "vhdl":
-            assert include_dirs is None
-            source_file: SourceFile = VHDLSourceFile(
+            if include_dirs is not None:
+                raise ValueError("include_dirs is not supported for VHDL source files")
+            source_file = VHDLSourceFile(
                 fname,
                 library,
                 vhdl_parser=self._vhdl_parser,
@@ -163,14 +174,18 @@ class Project(object):  # pylint: disable=too-many-instance-attributes
 
         return old_source_file
 
-    def add_manual_dependency(self, source_file, depends_on):
+    def add_manual_dependency(self, source_file: SourceFile, depends_on: SourceFile) -> None:
         """
         Add manual dependency where 'source_file' depends_on 'depends_on'
         """
         self._manual_dependencies.append((source_file, depends_on))
 
     @staticmethod
-    def _failed_to_find_primary_design_unit_in_library(source_file_name, primary_design_unit, library_name):
+    def _failed_to_find_primary_design_unit_in_library(
+        source_file_name: str,
+        primary_design_unit: str,
+        library_name: str,
+    ) -> None:
         """
         Show a warning about a primary unit not found in a library.
 
@@ -230,7 +245,7 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
                 print(hline)
                 break
 
-    def _find_primary_secondary_design_unit_dependencies(self, source_file):
+    def _find_primary_secondary_design_unit_dependencies(self, source_file: SourceFile) -> Iterator[SourceFile]:
         """
         Iterate over dependencies between the primary design units of the source_file
         and their secondary design units
@@ -238,8 +253,18 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
         library = source_file.library
 
         for unit in source_file.design_units:
+            if not isinstance(unit, VHDLDesignUnit):
+                raise RuntimeError(
+                    f"Expected VHDL design unit while processing {source_file.name!s}, "
+                    f"got {type(unit).__name__!s}"
+                )
             if unit.is_primary:
                 continue
+
+            if unit.primary_design_unit is None:
+                raise RuntimeError(
+                    f"Secondary design unit {unit.name!s} in {source_file.name!s} has no primary_design_unit"
+                )
 
             try:
                 primary_unit = library.primary_design_units[unit.primary_design_unit]
@@ -252,7 +277,7 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
             else:
                 yield primary_unit.source_file
 
-    def _find_vhdl_library_reference(self, library_name):
+    def _find_vhdl_library_reference(self, library_name: str) -> Library:
         """
         Find a VHDL library reference that is case insensitive or raise KeyError
         """
@@ -260,7 +285,11 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
         return self._libraries[real_library_name]
 
     @staticmethod
-    def _handle_ambiguous_architecture(source_file, ref, primary_unit):
+    def _handle_ambiguous_architecture(
+        source_file: SourceFile,
+        ref: VHDLReference,
+        primary_unit: Entity,
+    ) -> None:
         """
         Pretty print architecture ambiguity
         """
@@ -277,11 +306,18 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
         )
 
     def _find_other_vhdl_design_unit_dependencies(  # pylint: disable=too-many-branches
-        self, source_file, depend_on_package_body, implementation_dependencies
-    ):
+        self,
+        source_file: SourceFile,
+        depend_on_package_body: bool,
+        implementation_dependencies: bool,
+    ) -> Iterator[SourceFile]:
         """
         Iterate over the dependencies on other design unit of the source_file
         """
+        if not isinstance(source_file, VHDLSourceFile):
+            raise RuntimeError(
+                f"Expected VHDL source file, got {type(source_file).__name__!s} for {source_file.name!s}"
+            )
         for ref in source_file.dependencies:
             try:
                 library = self._find_vhdl_library_reference(ref.library)
@@ -309,13 +345,18 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
                 yield primary_unit.source_file
 
             if ref.is_entity_reference():
+                if not isinstance(primary_unit, Entity):
+                    raise RuntimeError(
+                        f"Entity reference {ref.library!s}.{ref.design_unit!s} resolved to non-Entity design unit"
+                    )
+                names: list[str | None]
                 if ref.reference_all_names_within():
                     # Reference all architectures,
                     # We make configuration declarations implicitly reference all architectures
-                    names = primary_unit.architecture_names.keys()
+                    names = list(primary_unit.architecture_names.keys())
                 elif ref.name_within is None and implementation_dependencies:
                     # For implementation dependencies we add a dependency to all architectures
-                    names = primary_unit.architecture_names.keys()
+                    names = list(primary_unit.architecture_names.keys())
                 else:
                     names = [ref.name_within]
 
@@ -346,10 +387,14 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
                     # There was no package body, which is legal in VHDL
                     pass
 
-    def _find_verilog_package_dependencies(self, source_file):
+    def _find_verilog_package_dependencies(self, source_file: SourceFile) -> Iterator[SourceFile]:
         """
         Find dependencies from import of verilog packages
         """
+        if not isinstance(source_file, VerilogSourceFile):
+            raise RuntimeError(
+                f"Expected Verilog source file, got {type(source_file).__name__!s} for {source_file.name!s}"
+            )
         for package_name in source_file.package_dependencies:
             for library in self._libraries.values():
                 try:
@@ -358,10 +403,14 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
                 except KeyError:
                     pass
 
-    def _find_verilog_module_dependencies(self, source_file):
+    def _find_verilog_module_dependencies(self, source_file: SourceFile) -> Iterator[SourceFile]:
         """
         Find dependencies from instantiation of verilog modules
         """
+        if not isinstance(source_file, VerilogSourceFile):
+            raise RuntimeError(
+                f"Expected Verilog source file, got {type(source_file).__name__!s} for {source_file.name!s}"
+            )
         for module_name in source_file.module_dependencies:
             if module_name in source_file.library.modules:
                 design_unit = source_file.library.modules[module_name]
@@ -375,11 +424,15 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
                         pass
 
     @staticmethod
-    def _find_component_design_unit_dependencies(source_file):
+    def _find_component_design_unit_dependencies(source_file: SourceFile) -> Iterator[SourceFile]:
         """
         Iterate over the dependencies on other design units of the source_file
         that are the result of component instantiations
         """
+        if not isinstance(source_file, VHDLSourceFile):
+            raise RuntimeError(
+                f"Expected VHDL source file, got {type(source_file).__name__!s} for {source_file.name!s}"
+            )
         for unit_name in source_file.depending_components:
             found_component_match = False
 
@@ -387,8 +440,9 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
                 primary_unit = source_file.library.primary_design_units[unit_name]
                 yield primary_unit.source_file
 
-                for file_name in primary_unit.architecture_names.values():
-                    yield source_file.library.get_source_file(file_name)
+                if isinstance(primary_unit, Entity):
+                    for file_name in primary_unit.architecture_names.values():
+                        yield source_file.library.get_source_file(file_name)
             except KeyError:
                 pass
             else:
@@ -408,12 +462,12 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
                     unit_name,
                 )
 
-    def create_dependency_graph(self, implementation_dependencies=False):
+    def create_dependency_graph(self, implementation_dependencies: bool = False) -> DependencyGraph[SourceFile]:
         """
         Create a DependencyGraph object of the HDL code project
         """
 
-        def add_dependency(start, end):
+        def add_dependency(start: SourceFile, end: SourceFile) -> None:
             """
             Utility to add dependency
             """
@@ -425,7 +479,10 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
             if is_new:
                 LOGGER.debug("Adding dependency: %s depends on %s", end.name, start.name)
 
-        def add_dependencies(dependency_function, files):
+        def add_dependencies(
+            dependency_function: Callable[[SourceFile], Iterable[SourceFile]],
+            files: Iterable[SourceFile],
+        ) -> None:
             """
             Utility to add all dependencies returned by a dependency_function
             returning an iterator of dependencies
@@ -434,7 +491,7 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
                 for dependency in dependency_function(source_file):
                     add_dependency(dependency, source_file)
 
-        dependency_graph = DependencyGraph()
+        dependency_graph: DependencyGraph[SourceFile] = DependencyGraph()
         for source_file in self._source_files_in_order:
             dependency_graph.add_node(source_file)
 
@@ -465,7 +522,7 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
         return dependency_graph
 
     @staticmethod
-    def _handle_circular_dependency(exception):
+    def _handle_circular_dependency(exception: CircularDependencyException) -> None:
         """
         Pretty print circular dependency to error log
         """
@@ -474,13 +531,13 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
             " ->\n".join(source_file.name for source_file in exception.path),
         )
 
-    def get_compile_timestamps(self, files):
+    def get_compile_timestamps(self, files: Iterable[SourceFile]) -> dict[SourceFile, float | None]:
         """
         Return a dictionary of mapping file to the timestamp when it
         was compiled or None if it was not compiled
         """
         # Cache timestamps to avoid duplicate file operations
-        timestamps = {}
+        timestamps: dict[SourceFile, float | None] = {}
         for source_file in files:
             hash_file_name = self.hash_file_name_of(source_file)
             if not ostools.file_exists(hash_file_name):
@@ -489,7 +546,12 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
                 timestamps[source_file] = ostools.get_modification_time(hash_file_name)
         return timestamps
 
-    def get_files_in_compile_order(self, incremental=True, dependency_graph=None, files=None):
+    def get_files_in_compile_order(
+        self,
+        incremental: bool = True,
+        dependency_graph: DependencyGraph[SourceFile] | None = None,
+        files: Iterable[SourceFile] | None = None,
+    ) -> list[SourceFile]:
         """
         Get a list of all files in compile order
         param: incremental: Only return files that need recompile if True
@@ -503,7 +565,12 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
         )
         return self.get_affected_files_in_compile_order(files_to_recompile, dependency_graph.get_dependent)
 
-    def _get_files_to_recompile(self, files, dependency_graph, incremental):
+    def _get_files_to_recompile(
+        self,
+        files: Iterable[SourceFile],
+        dependency_graph: DependencyGraph[SourceFile],
+        incremental: bool,
+    ) -> list[SourceFile]:
         """
         Analyse a given set of SourceFile according to the compile timestamps
         and return the set that has to be recompiled.
@@ -511,13 +578,17 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
         param: dependency_graph: The DependencyGraph object to be used
         """
         timestamps = self.get_compile_timestamps(files)
-        result_list = []
+        result_list: list[SourceFile] = []
         for source_file in files:
             if (not incremental) or self._needs_recompile(dependency_graph, source_file, timestamps):
                 result_list.append(source_file)
         return result_list
 
-    def get_dependencies_in_compile_order(self, target_files=None, implementation_dependencies=False):
+    def get_dependencies_in_compile_order(
+        self,
+        target_files: Iterable[SourceFile] | None = None,
+        implementation_dependencies: bool = False,
+    ) -> list[SourceFile]:
         """
         Get a list of dependencies of target files including the
         target files.
@@ -530,16 +601,28 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
         dependency_graph = self.create_dependency_graph(implementation_dependencies)
         return self.get_affected_files_in_compile_order(set(target_files), dependency_graph.get_dependencies)
 
-    def get_affected_files_in_compile_order(self, target_files, get_depend_func):
+    def get_affected_files_in_compile_order(
+        self,
+        target_files: Iterable[SourceFile],
+        get_depend_func: Callable[[Iterable[SourceFile]], set[SourceFile]],
+    ) -> list[SourceFile]:
         """
         Returns the affected files in compile order given a list of target files and a dependencie function
         :param target_files: The files to compile
         :param get_depend_func: one of DependencyGraph [get_dependencies, get_dependent, get_direct_dependencies]
         """
         affected_files = self.get_affected_files(target_files, get_depend_func)
-        return self._get_compile_order(affected_files, get_depend_func.__self__)
+        owner = getattr(get_depend_func, "__self__", None)
+        if not isinstance(owner, DependencyGraph):
+            raise RuntimeError(
+                "get_depend_func must be a bound method of a DependencyGraph instance"
+            )
+        return self._get_compile_order(affected_files, owner)
 
-    def get_minimal_file_set_in_compile_order(self, target_files=None):
+    def get_minimal_file_set_in_compile_order(
+        self,
+        target_files: Iterable[SourceFile] | None = None,
+    ) -> list[SourceFile]:
         """
         Get the minimal set of files to be compiled for a list of target files of type SourceFile
         param: target_files: List of type SourceFile, if the paramater is None all files are used
@@ -563,7 +646,11 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
         min_file_set_to_be_compiled = [f for f in max_file_set_to_be_compiled if f in dependency_files]
         return min_file_set_to_be_compiled
 
-    def get_affected_files(self, target_files, get_depend_func):
+    def get_affected_files(
+        self,
+        target_files: Iterable[SourceFile],
+        get_depend_func: Callable[[Iterable[SourceFile]], set[SourceFile]],
+    ) -> set[SourceFile]:
         """
         Get affected files given a  list of type SourceFile, if the list is None
         all files are taken into account
@@ -577,7 +664,11 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
             self._handle_circular_dependency(exc)
             raise CompileError from exc
 
-    def _get_compile_order(self, files, dependency_graph):
+    def _get_compile_order(
+        self,
+        files: Iterable[SourceFile],
+        dependency_graph: DependencyGraph[SourceFile],
+    ) -> list[SourceFile]:
         """
         Returns a sorted list of type SourceFile using the given dependency graph
         param: dependency_graph: The DependencyGraph object
@@ -588,27 +679,32 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
             self._handle_circular_dependency(exc)
             raise CompileError from exc
 
-        def comparison_key(source_file):
+        def comparison_key(source_file: SourceFile) -> int:
             return compile_order.index(source_file)
 
         return sorted(files, key=comparison_key)
 
-    def get_source_files_in_order(self):
+    def get_source_files_in_order(self) -> list[SourceFile]:
         """
         Get a list of source files in the order they were added to the project
         """
         return list(self._source_files_in_order)
 
-    def get_libraries(self):
+    def get_libraries(self) -> Iterable[Library]:
         return self._libraries.values()
 
-    def get_library(self, library_name):
+    def get_library(self, library_name: str) -> Library:
         return self._libraries[library_name]
 
-    def has_library(self, library_name):
+    def has_library(self, library_name: str) -> bool:
         return library_name in self._libraries
 
-    def _needs_recompile(self, dependency_graph, source_file, timestamps):
+    def _needs_recompile(
+        self,
+        dependency_graph: DependencyGraph[SourceFile],
+        source_file: SourceFile,
+        timestamps: dict[SourceFile, float | None],
+    ) -> bool:
         """
         Returns True if the source_file needs to be recompiled
         given the dependency_graph, the file contents and the last modification time
@@ -650,7 +746,7 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
 
         return False
 
-    def hash_file_name_of(self, source_file):
+    def hash_file_name_of(self, source_file: SourceFile) -> str:
         """
         Returns the name of the hash file associated with the source_file
         """
@@ -658,7 +754,7 @@ See https://github.com/VUnit/vunit/issues/777 and http://vunit.github.io/hdl_lib
         prefix = hash_string(str(Path(source_file.name).parent))
         return str(Path(library.directory) / prefix / Path(source_file.name).name / ".vunit_hash")
 
-    def update(self, source_file):
+    def update(self, source_file: SourceFile) -> None:
         """
         Mark that source_file has been recompiled, triggers a re-write of the hash file
         to update the timestamp

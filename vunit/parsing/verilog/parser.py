@@ -11,11 +11,14 @@
 Verilog parsing functionality
 """
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
+from vunit.database import PickledDataBase
 from vunit.ostools import read_file
 from vunit.parsing.encodings import HDL_FILE_ENCODING
-from vunit.parsing.tokenizer import TokenStream, EOFException, LocationException
+from vunit.parsing.tokenizer import TokenStream, TokenType, EOFException, LocationException
 from vunit.parsing.verilog.tokenizer import VerilogTokenizer
 from vunit.parsing.verilog.preprocess import (
     VerilogPreprocessor,
@@ -50,13 +53,18 @@ class VerilogParser(object):
     Parse a single Verilog file
     """
 
-    def __init__(self, database=None):
+    def __init__(self, database: PickledDataBase | None = None) -> None:
         self._tokenizer = VerilogTokenizer()
         self._preprocessor = VerilogPreprocessor(self._tokenizer)
         self._database = database
-        self._content_cache = {}
+        self._content_cache: dict[str, str | None] = {}
 
-    def parse(self, file_name, include_paths=None, defines=None):
+    def parse(
+        self,
+        file_name: str,
+        include_paths: list[str] | None = None,
+        defines: dict[str, str] | None = None,
+    ) -> VerilogDesignFile:
         """
         Parse verilog code
         """
@@ -72,7 +80,7 @@ class VerilogParser(object):
         initial_defines = dict((key, Macro(key, self._tokenizer.tokenize(value))) for key, value in defines.items())
         code = read_file(file_name, encoding=HDL_FILE_ENCODING)
         tokens = self._tokenizer.tokenize(code, file_name=file_name)
-        included_files = []
+        included_files: list[tuple[str, str | None]] = []
         pp_tokens = self._preprocessor.preprocess(
             tokens,
             include_paths=include_paths,
@@ -90,17 +98,26 @@ class VerilogParser(object):
         return result
 
     @staticmethod
-    def _key(file_name):
+    def _key(file_name: str) -> bytes:
         """
         Returns the database key for parse results of file_name
         """
         return f"CachedVerilogParser.parse({str(Path(file_name).resolve)})".encode()
 
-    def _store_result(self, file_name, result, included_files, defines):
+    def _store_result(
+        self,
+        file_name: str,
+        result: VerilogDesignFile,
+        included_files: list[tuple[str, str | None]],
+        defines: dict[str, str],
+    ) -> VerilogDesignFile:
         """
         Store parse result into back into cache
         """
-        new_included_files = []
+        if self._database is None:
+            raise RuntimeError("_store_result called without a database")
+
+        new_included_files: list[tuple[str, str | None, str | None]] = []
         for short_name, full_name in included_files:
             new_included_files.append((short_name, full_name, self._content_hash(full_name)))
 
@@ -113,7 +130,7 @@ class VerilogParser(object):
         )
         return result
 
-    def _content_hash(self, file_name):
+    def _content_hash(self, file_name: str | None) -> str | None:
         """
         Hash the contents of the file
         """
@@ -125,7 +142,12 @@ class VerilogParser(object):
             )
         return self._content_cache[file_name]
 
-    def _lookup_parse_cache(self, file_name, include_paths, defines):
+    def _lookup_parse_cache(
+        self,
+        file_name: str,
+        include_paths: list[str],
+        defines: dict[str, str],
+    ) -> VerilogDesignFile | None:
         """
         Use verilog code from cache
         """
@@ -154,7 +176,8 @@ class VerilogParser(object):
 
         LOGGER.debug("Re-using cached Verilog parse results for %s", file_name)
 
-        return old_result
+        cached_result: VerilogDesignFile = old_result
+        return cached_result
 
 
 class VerilogDesignFile(object):
@@ -165,22 +188,22 @@ class VerilogDesignFile(object):
     def __init__(  # pylint: disable=too-many-arguments
         self,
         *,
-        modules=None,
-        packages=None,
-        imports=None,
-        package_references=None,
-        instances=None,
-        included_files=None,
-    ):
-        self.modules = [] if modules is None else modules
-        self.packages = [] if packages is None else packages
-        self.imports = [] if imports is None else imports
-        self.package_references = [] if package_references is None else package_references
-        self.instances = [] if instances is None else instances
-        self.included_files = [] if included_files is None else included_files
+        modules: list[VerilogModule] | None = None,
+        packages: list[VerilogPackage] | None = None,
+        imports: list[str] | None = None,
+        package_references: list[str] | None = None,
+        instances: list[str] | None = None,
+        included_files: list[str] | None = None,
+    ) -> None:
+        self.modules: list[VerilogModule] = [] if modules is None else modules
+        self.packages: list[VerilogPackage] = [] if packages is None else packages
+        self.imports: list[str] = [] if imports is None else imports
+        self.package_references: list[str] = [] if package_references is None else package_references
+        self.instances: list[str] = [] if instances is None else instances
+        self.included_files: list[str] = [] if included_files is None else included_files
 
     @classmethod
-    def parse(cls, tokens, included_files):
+    def parse(cls, tokens: list[TokenType], included_files: list[str]) -> VerilogDesignFile:
         """
         Parse verilog file
         """
@@ -195,11 +218,11 @@ class VerilogDesignFile(object):
         )
 
     @staticmethod
-    def find_imports(tokens):
+    def find_imports(tokens: list[TokenType]) -> list[str]:
         """
         Find imports
         """
-        results = []
+        results: list[str] = []
         stream = TokenStream(tokens)
         while not stream.eof:
             token = stream.pop()
@@ -218,11 +241,11 @@ class VerilogDesignFile(object):
         return results
 
     @staticmethod
-    def find_package_references(tokens):
+    def find_package_references(tokens: list[TokenType]) -> list[str]:
         """
         Find package_references pkg::func
         """
-        results = []
+        results: list[str] = []
         stream = TokenStream(tokens)
         while not stream.eof:
             token = stream.pop()
@@ -239,11 +262,11 @@ class VerilogDesignFile(object):
         return results
 
     @staticmethod
-    def find_instances(tokens):
+    def find_instances(tokens: list[TokenType]) -> list[str]:
         """
         Find module instances
         """
-        results = []
+        results: list[str] = []
         stream = TokenStream(tokens)
         while not stream.eof:
             token = stream.pop()
@@ -269,7 +292,7 @@ class VerilogDesignFile(object):
         return results
 
 
-def _parse_block_label(stream):
+def _parse_block_label(stream: TokenStream) -> None:
     """
     Parse a optional block label after begin|end keyword
     """
@@ -292,12 +315,12 @@ class VerilogModule(object):
     A verilog module
     """
 
-    def __init__(self, name, parameters):
+    def __init__(self, name: str | None, parameters: list[str]) -> None:
         self.name = name
         self.parameters = parameters
 
     @classmethod
-    def parse_parameter(cls, idx, tokens):
+    def parse_parameter(cls, idx: int, tokens: list[TokenType]) -> str | None:
         """
         Parse parameter at point
         """
@@ -310,15 +333,15 @@ class VerilogModule(object):
         return tokens[idx + 1].value
 
     @classmethod
-    def find(cls, tokens):
+    def find(cls, tokens: list[TokenType]) -> list[VerilogModule]:
         """
         Find all modules within code, nested modules are ignored
         """
         idx = 0
-        name = None
+        name: str | None = None
         balance = 0
-        results = []
-        parameters = []
+        results: list[VerilogModule] = []
+        parameters: list[str] = []
         while idx < len(tokens):
             if tokens[idx].kind == MODULE:
                 if balance == 0:
@@ -345,16 +368,16 @@ class VerilogPackage(object):
     A verilog package
     """
 
-    def __init__(self, name):
+    def __init__(self, name: str) -> None:
         self.name = name
 
     @classmethod
-    def find(cls, tokens):
+    def find(cls, tokens: list[TokenType]) -> list[VerilogPackage]:
         """
         Find all modules within code, nested modules are ignored
         """
         idx = 0
-        results = []
+        results: list[VerilogPackage] = []
         while idx < len(tokens):
             if tokens[idx].kind == PACKAGE:
                 idx += 1

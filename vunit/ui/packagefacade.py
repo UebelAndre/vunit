@@ -8,8 +8,16 @@
 UI class PackageFacade
 """
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 from ..com import codec_generator
+
+if TYPE_CHECKING:
+    from ..design_unit import DesignUnit
+    from . import VUnit
+    from .source import SourceFileList
 
 
 class PackageFacade(object):
@@ -17,13 +25,24 @@ class PackageFacade(object):
     User interface of a Package
     """
 
-    def __init__(self, parent, library_name, package_name, design_unit):
+    def __init__(
+        self,
+        parent: VUnit,
+        library_name: str,
+        package_name: str,
+        design_unit: DesignUnit,
+    ) -> None:
         self._parent = parent
         self._library_name = library_name
         self._package_name = package_name
         self._design_unit = design_unit
 
-    def generate_codecs(self, codec_package_name=None, used_packages=None, output_file_name=None):
+    def generate_codecs(
+        self,
+        codec_package_name: str | None = None,
+        used_packages: list[str] | None = None,
+        output_file_name: str | Path | None = None,
+    ) -> SourceFileList:
         """
         Generates codecs for the datatypes in this Package
         """

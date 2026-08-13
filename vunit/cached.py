@@ -8,20 +8,33 @@
 Utility to perform costly operation on file contents which can be cached
 """
 
+from __future__ import annotations
+
 import os
+from typing import Callable, TypeVar
+from vunit.database import PickledDataBase
 from vunit.hashing import hash_string
 from vunit.ostools import read_file
 
+T = TypeVar("T")
 
-def cached(key, function, file_name, encoding, *, database=None, newline=None):
+
+def cached(
+    key: str,
+    function: Callable[[str], T],
+    file_name: str,
+    encoding: str,
+    *,
+    database: PickledDataBase | None = None,
+    newline: str | None = None,
+) -> T:
     """
     Call function with file content if an update is needed
     """
 
     if database is None:
         # Without a database just return the function of the contents
-        content = read_file(file_name, encoding=encoding, newline=newline)
-        return function(content)
+        return function(read_file(file_name, encoding=encoding, newline=newline))
 
     function_key = f"{key!s}({file_name!s}, newline={newline!s})".encode()
     content, content_hash = _file_content_hash(file_name, encoding, database, newline=newline)
@@ -37,7 +50,12 @@ def cached(key, function, file_name, encoding, *, database=None, newline=None):
 
     old_content_hash, old_result = database[function_key]
     if old_content_hash == content_hash:
-        return old_result
+        # ``old_result`` was pickled by an earlier ``cached`` call for this
+        # ``function`` so it is by construction a ``T``. Assigning through
+        # a typed local avoids the ``no-any-return`` mypy error that would
+        # otherwise arise from the ``Any`` returned by the pickled database.
+        cached_result: T = old_result
+        return cached_result
 
     # Content hash differs, recompute and update database
     if content is None:
@@ -47,7 +65,11 @@ def cached(key, function, file_name, encoding, *, database=None, newline=None):
     return result
 
 
-def file_content_hash(file_name, encoding, database=None):
+def file_content_hash(
+    file_name: str,
+    encoding: str,
+    database: PickledDataBase | None = None,
+) -> str:
     """
     Returns the hash of the contents of the file
 
@@ -58,7 +80,12 @@ def file_content_hash(file_name, encoding, database=None):
     return content_hash
 
 
-def _file_content_hash(file_name, encoding, database=None, newline=None):
+def _file_content_hash(
+    file_name: str,
+    encoding: str,
+    database: PickledDataBase | None = None,
+    newline: str | None = None,
+) -> tuple[str | None, str]:
     """
     Returns the file content as well as the hash of the content
 

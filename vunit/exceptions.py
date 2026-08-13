@@ -8,6 +8,8 @@
 Contains exceptions which are globally known
 """
 
+from __future__ import annotations
+
 
 class CompileError(Exception):
     """

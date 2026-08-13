@@ -8,16 +8,20 @@
 Simulator interface(s)
 """
 
+from __future__ import annotations
+
+import argparse
 import sys
 import os
+from abc import ABC, abstractmethod
 from os import environ, listdir, pathsep
 import locale
 import subprocess
 from pathlib import Path
-from typing import List
+from typing import Any, Callable, Mapping, Sequence
 from ..ostools import Process, simplify_path
 from ..exceptions import CompileError
-from ..color_printer import NO_COLOR_PRINTER
+from ..color_printer import NO_COLOR_PRINTER, ColorPrinter
 
 
 class Option(object):
@@ -25,18 +29,18 @@ class Option(object):
     A compile or sim option
     """
 
-    def __init__(self, name):
+    def __init__(self, name: str) -> None:
         self._name = name
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name
 
-    def validate(self, value):
+    def validate(self, value: Any) -> None:
         pass
 
 
-def add_extension(executable_name):
+def add_extension(executable_name: str) -> str:
     """
     Add .exe extension on Windows platforms if not already present
     """
@@ -48,54 +52,57 @@ def add_extension(executable_name):
     return executable_name
 
 
-class SimulatorInterface(object):  # pylint: disable=too-many-public-methods
+class SimulatorInterface(ABC):  # pylint: disable=too-many-public-methods
     """
-    Generic simulator interface
+    Generic simulator interface.
+
+    Concrete simulators must implement :meth:`from_args`, :meth:`simulate`, and
+    :meth:`compile_source_file_command`; other methods provide sensible defaults.
     """
 
     name: str = "none"
-    supports_gui_flag = False
-    package_users_depend_on_bodies = False
-    compile_options: List[Option] = []
-    sim_options: List[Option] = []
+    supports_gui_flag: bool = False
+    package_users_depend_on_bodies: bool = False
+    compile_options: list[Option] = []
+    sim_options: list[Option] = []
 
     # True if simulator supports ANSI colors in GUI mode
-    supports_colors_in_gui = False
+    supports_colors_in_gui: bool = False
 
-    def __init__(self, output_path, gui):
+    def __init__(self, output_path: str, gui: bool) -> None:
         self._output_path = output_path
         self._gui = gui
 
     @property
-    def output_path(self):
+    def output_path(self) -> str:
         return self._output_path
 
     @property
-    def use_color(self):
+    def use_color(self) -> bool:
         return (not self._gui) or self.supports_colors_in_gui
 
     @staticmethod
-    def add_arguments(parser):
+    def add_arguments(parser: argparse.ArgumentParser) -> None:
         """
         Add command line arguments
         """
 
     @staticmethod
-    def supports_vhdl_contexts():
+    def supports_vhdl_contexts() -> bool:
         """
         Returns True when this simulator supports VHDL contexts
         """
         return True
 
     @classmethod
-    def supports_vhdl_call_paths(cls):
+    def supports_vhdl_call_paths(cls) -> bool:
         """
         Returns True when this simulator supports VHDL-2019 call paths
         """
         return False
 
     @staticmethod
-    def find_executable(executable):
+    def find_executable(executable: str) -> list[str]:
         """
         Return a list of all executables found in PATH
         """
@@ -106,7 +113,7 @@ class SimulatorInterface(object):  # pylint: disable=too-many-public-methods
         paths = path.split(pathsep)
         executable = add_extension(executable)
 
-        result = []
+        result: list[str] = []
         if isfile(executable):
             result.append(executable)
 
@@ -118,7 +125,7 @@ class SimulatorInterface(object):  # pylint: disable=too-many-public-methods
         return result
 
     @classmethod
-    def find_prefix(cls):
+    def find_prefix(cls) -> str | None:
         """
         Find prefix by looking at VUNIT_<SIMULATOR_NAME>_PATH environment variable
         """
@@ -128,20 +135,25 @@ class SimulatorInterface(object):  # pylint: disable=too-many-public-methods
         return cls.find_prefix_from_path()
 
     @classmethod
-    def find_prefix_from_path(cls):
+    def find_prefix_from_path(cls) -> str | None:
         """
         Find simulator toolchain prefix from PATH environment variable
         """
+        return None
 
     @classmethod
-    def is_available(cls):
+    def is_available(cls) -> bool:
         """
         Returns True if simulator is available
         """
         return cls.find_prefix() is not None
 
     @classmethod
-    def find_toolchain(cls, executables, constraints=None):
+    def find_toolchain(
+        cls,
+        executables: Sequence[str],
+        constraints: list[Callable[[str], bool]] | None = None,
+    ) -> str | None:
         """
         Find the first path prefix containing all executables
         """
@@ -161,57 +173,72 @@ class SimulatorInterface(object):  # pylint: disable=too-many-public-methods
         return None
 
     @classmethod
-    def get_osvvm_coverage_api(cls):
+    def get_osvvm_coverage_api(cls) -> str | None:
         """
         Returns simulator name when OSVVM coverage API is supported, None otherwise.
         """
+        return None
 
     @classmethod
-    def supports_vhdl_package_generics(cls):
+    def supports_vhdl_package_generics(cls) -> bool:
         """
         Returns True when this simulator supports VHDL package generics
         """
         return False
 
-    @staticmethod
-    def has_valid_exit_code():
+    def has_valid_exit_code(self) -> bool:
         """
         Return if the simulation should fail with nonzero exit codes
         """
         return False
 
+    @classmethod
+    @abstractmethod
+    def from_args(
+        cls,
+        args: argparse.Namespace,
+        output_path: str,
+        **kwargs: Any,
+    ) -> "SimulatorInterface":
+        """
+        Create a simulator instance from parsed CLI arguments.
+
+        Concrete simulator subclasses override this to consume their own flags.
+        """
+
     @staticmethod
-    def supports_vhpi():
+    def supports_vhpi() -> bool:
         """
         Returns True when the simulator supports VHPI
         """
         return False
 
     @staticmethod
-    def supports_coverage():
+    def supports_coverage() -> bool:
         """
         Returns True when the simulator supports coverage
         """
         return False
 
-    def merge_coverage(self, file_name, args):  # pylint: disable=unused-argument
+    def merge_coverage(self, file_name: str, args: list[str] | None) -> None:
         """
         Hook for simulator interface to creating coverage reports
         """
+        del file_name, args  # unused in base; overridden by simulators that support coverage
         raise RuntimeError("This simulator does not support merging coverage")
 
-    def add_simulator_specific(self, project):
+    def add_simulator_specific(self, project: Any) -> None:
         """
         Hook for the simulator interface to add simulator specific things to the project
         """
 
     def compile_project(
         self,
-        project,
-        printer=NO_COLOR_PRINTER,
-        continue_on_error=False,
-        target_files=None,
-    ):
+        project: Any,
+        printer: ColorPrinter = NO_COLOR_PRINTER,
+        continue_on_error: bool = False,
+        target_files: list[Any] | None = None,
+    ) -> None:
         """
         Compile the project
         param: target_files: Given a list of SourceFiles only these and dependent files are compiled
@@ -220,24 +247,33 @@ class SimulatorInterface(object):  # pylint: disable=too-many-public-methods
         self.setup_library_mapping(project)
         self.compile_source_files(project, printer, continue_on_error, target_files=target_files)
 
-    def simulate(self, output_path, test_suite_name, config, elaborate_only):
+    @abstractmethod
+    def simulate(
+        self,
+        output_path: str,
+        test_suite_name: str,
+        config: Any,
+        elaborate_only: bool,
+    ) -> bool:
         """
-        Simulate
+        Run one test suite. Concrete simulators override this.
         """
 
-    def setup_library_mapping(self, project):
+    def setup_library_mapping(self, project: Any) -> None:
         """
-        Implemented by specific simulators
-        """
+        Set up the simulator library mapping for the project.
 
-    def _compile_source_file(self, source_file, printer):
+        Default: no-op. Override in simulators that need per-project library setup.
+        """
+        del project
+
+    def _compile_source_file(self, source_file: Any, printer: ColorPrinter) -> bool:
         """
         Compiles a single source file and prints status information
         """
         try:
             command = self.compile_source_file_command(source_file)
         except CompileError:
-            command = None
             printer.write("failed", fg="ri")
             printer.write("\n")
             printer.write(f"File type not supported by {self.name!s} simulator\n")
@@ -263,11 +299,11 @@ class SimulatorInterface(object):  # pylint: disable=too-many-public-methods
 
     def compile_source_files(
         self,
-        project,
-        printer=NO_COLOR_PRINTER,
-        continue_on_error=False,
-        target_files=None,
-    ):
+        project: Any,
+        printer: ColorPrinter = NO_COLOR_PRINTER,
+        continue_on_error: bool = False,
+        target_files: list[Any] | None = None,
+    ) -> None:
         """
         Use compile_source_file_command to compile all source_files
         param: target_files: Given a list of SourceFiles only these and dependent files are compiled
@@ -320,17 +356,19 @@ class SimulatorInterface(object):  # pylint: disable=too-many-public-methods
         else:
             printer.write("Re-compile not needed\n")
 
-    def compile_source_file_command(self, source_file):  # pylint: disable=unused-argument
-        raise NotImplementedError
+    @abstractmethod
+    def compile_source_file_command(self, source_file: Any) -> list[str]:
+        """Return the command line used to compile a single source file. Concrete simulators override this."""
 
     @staticmethod
-    def get_env():
+    def get_env() -> Mapping[str, str] | None:
         """
         Allows inheriting classes to overload this to modify environment variables. Return None for default environment
         """
+        return None
 
 
-def isfile(file_name):
+def isfile(file_name: str) -> bool:
     """
     Case insensitive Path.is_file()
     """
@@ -344,7 +382,11 @@ def isfile(file_name):
     return str(fpath.name) in listdir(str(fpath.parent))
 
 
-def run_command(command, cwd=None, env=None):
+def run_command(
+    command: Sequence[str],
+    cwd: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> bool:
     """
     Run a command
     """
@@ -357,7 +399,7 @@ def run_command(command, cwd=None, env=None):
     return False
 
 
-def check_output(command, env=None):
+def check_output(command: Sequence[str], env: Mapping[str, str] | None = None) -> str:
     """
     Wrapper arround subprocess.check_output
     """
@@ -393,7 +435,7 @@ def check_output(command, env=None):
     return _decode(output)
 
 
-def check_executable(simulator_name, prefix, executable_name):
+def check_executable(simulator_name: str, prefix: str | None, executable_name: str) -> None:
     """
     Check that the executable exists.
 
@@ -404,9 +446,7 @@ def check_executable(simulator_name, prefix, executable_name):
 
     # If environment variable isn't used for executable naming and VUNIT_<SIMULATOR_NAME>_PATH isn't set, the prefix
     # will be invalid since the toolchain search didn't find anything.
-    try:
-        prefix_path = Path(prefix)
-    except TypeError as exc:
+    if prefix is None:
         error_message = f"{simulator_name} executable not found."
         if env_name is not None:
             error_message += (
@@ -414,7 +454,9 @@ def check_executable(simulator_name, prefix, executable_name):
                 f" Current value is {env_name}."
             )
 
-        raise FileNotFoundError(error_message) from exc
+        raise FileNotFoundError(error_message)
+
+    prefix_path = Path(prefix)
 
     executable_name = add_extension(executable_name)
 
@@ -435,7 +477,7 @@ class BooleanOption(Option):
     Must be a boolean
     """
 
-    def validate(self, value):
+    def validate(self, value: Any) -> None:
         if value not in (True, False):
             raise ValueError(f"Option {self.name!r} must be a boolean. Got {value!r}")
 
@@ -445,7 +487,7 @@ class StringOption(Option):
     Must be a string
     """
 
-    def validate(self, value):
+    def validate(self, value: Any) -> None:
         if not is_string_not_iterable(value):
             raise ValueError(f"Option {self.name!r} must be a string. Got {value!r}")
 
@@ -455,8 +497,8 @@ class ListOfStringOption(Option):
     Must be a list of strings
     """
 
-    def validate(self, value):
-        def fail():
+    def validate(self, value: Any) -> None:
+        def fail() -> None:
             raise ValueError(f"Option {self.name!r} must be a list of strings. Got {value!r}")
 
         if is_string_not_iterable(value):
@@ -477,15 +519,15 @@ class VHDLAssertLevelOption(Option):
 
     _legal_values = ("warning", "error", "failure")
 
-    def __init__(self):
+    def __init__(self) -> None:
         Option.__init__(self, "vhdl_assert_stop_level")
 
-    def validate(self, value):
+    def validate(self, value: Any) -> None:
         if value not in self._legal_values:
             raise ValueError(f"Option {self.name!r} must be one of {self._legal_values!s}. Got {value!r}")
 
 
-def is_string_not_iterable(value):
+def is_string_not_iterable(value: Any) -> bool:
     """
     Returns True if value is a string and not another iterable
     """

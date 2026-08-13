@@ -8,11 +8,18 @@
 Contains classes to manage the creation of test benches and runnable test cases thereof
 """
 
+from __future__ import annotations
+
 import re
 import logging
 from collections import OrderedDict
 from .list import TestList
 from .bench import TestBench
+
+from ..database import PickledDataBase
+from ..design_unit import DesignUnit
+from ..sim_if import SimulatorInterface
+from ..source_file import SourceFile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -22,21 +29,20 @@ class TestBenchList(object):
     A list of test benchs
     """
 
-    def __init__(self, database=None):
-        self._libraries = OrderedDict()
+    def __init__(self, database: PickledDataBase | None = None) -> None:
+        self._libraries: OrderedDict[str, OrderedDict[str, TestBench]] = OrderedDict()
         self._database = database
 
-    def add_from_source_file(self, source_file):
+    def add_from_source_file(self, source_file: SourceFile) -> None:
         """
         Scan test benches from the source file and add to test bench list
         """
         for design_unit in source_file.design_units:
             if design_unit.is_entity or design_unit.is_module:
                 if tb_filter is None or tb_filter(design_unit):
-                    if design_unit.is_module or design_unit.is_entity:
-                        self._add_test_bench(TestBench(design_unit, self._database))
+                    self._add_test_bench(TestBench(design_unit, self._database))
 
-    def _add_test_bench(self, test_bench):
+    def _add_test_bench(self, test_bench: TestBench) -> None:
         """
         Add the test bench
         """
@@ -44,23 +50,28 @@ class TestBenchList(object):
             self._libraries[test_bench.library_name] = OrderedDict()
         self._libraries[test_bench.library_name][test_bench.name] = test_bench
 
-    def get_test_bench(self, library_name, name):
+    def get_test_bench(self, library_name: str, name: str) -> TestBench:
         return self._libraries[library_name][name]
 
-    def get_test_benches_in_library(self, library_name):
-        return list(self._libraries.get(library_name, {}).values())
+    def get_test_benches_in_library(self, library_name: str) -> list[TestBench]:
+        return list(self._libraries.get(library_name, OrderedDict()).values())
 
-    def get_test_benches(self):
+    def get_test_benches(self) -> list[TestBench]:
         """
         Get all test benches
         """
-        result = []
+        result: list[TestBench] = []
         for test_benches in self._libraries.values():
             for test_bench in test_benches.values():
                 result.append(test_bench)
         return result
 
-    def create_tests(self, simulator_if, seed, elaborate_only):
+    def create_tests(
+        self,
+        simulator_if: SimulatorInterface | None,
+        seed: str | None,
+        elaborate_only: bool,
+    ) -> TestList:
         """
         Create all test cases from the test benches
         """
@@ -69,7 +80,7 @@ class TestBenchList(object):
             test_bench.create_tests(simulator_if, seed, elaborate_only, test_list)
         return test_list
 
-    def warn_when_empty(self):
+    def warn_when_empty(self) -> None:
         """
         Log a warning when there are no test benches
         """
@@ -84,7 +95,7 @@ TB_PATTERN = "^(tb_.*)|(.*_tb)$"
 TB_RE = re.compile(TB_PATTERN, re.IGNORECASE)
 
 
-def tb_filter(design_unit):
+def tb_filter(design_unit: DesignUnit) -> bool:
     """
     Filters entities and modules that have a runner_cfg generic/parameter
 

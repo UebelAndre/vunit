@@ -9,6 +9,7 @@ Preprocessing of VHDL files to add file_name and line_num arguments to function 
 to enable better messages
 """
 
+from __future__ import annotations
 
 import re
 from vunit.ui.preprocessor import Preprocessor
@@ -20,9 +21,9 @@ class LocationPreprocessor(Preprocessor):
     arguments to calls of known function and procedures
     """
 
-    def __init__(self, order=1000):
+    def __init__(self, order: int = 1000) -> None:
         super().__init__(order)
-        self._subprograms_with_arguments = [
+        self._subprograms_with_arguments: list[str] = [
             "log",
             "trace",
             "debug",
@@ -52,16 +53,16 @@ class LocationPreprocessor(Preprocessor):
             "is_active_msg",
             "log_active",
         ]
-        self._subprograms_without_arguments = []
+        self._subprograms_without_arguments: list[str] = []
 
-    def add_subprogram(self, subprogram):
+    def add_subprogram(self, subprogram: str) -> None:
         """
         Add a subprogram name to the list of known names to preprocess
         """
         self._subprograms_without_arguments.append(subprogram)
         self._subprograms_with_arguments.append(subprogram)
 
-    def remove_subprogram(self, subprogram):
+    def remove_subprogram(self, subprogram: str) -> None:
         """
         Remove a subprogram name from the list of known names to preprocess
         """
@@ -75,7 +76,7 @@ class LocationPreprocessor(Preprocessor):
             self._subprograms_with_arguments.remove(subprogram)
 
     @staticmethod
-    def _find_closing_parenthesis(args):
+    def _find_closing_parenthesis(args: str) -> int | None:
         """
         Find the balanced closing parentesis
 
@@ -94,7 +95,7 @@ class LocationPreprocessor(Preprocessor):
     _subprogram_declaration_start_backwards_pattern = re.compile(r"\s+(erudecorp|noitcnuf)", re.IGNORECASE)
     _assignment_pattern = re.compile(r"\s*(:=|<=)", re.MULTILINE)
 
-    def run(self, code, file_name):
+    def run(self, code: str, file_name: str) -> str:
         potential_subprogram_call_with_arguments_pattern = re.compile(
             r"[^a-zA-Z0-9_](?P<subprogram>" + "|".join(self._subprograms_with_arguments) + r")\s*(?P<args>\()",
             re.MULTILINE,
@@ -117,6 +118,11 @@ class LocationPreprocessor(Preprocessor):
             line_num_association = ", line_num => " + str(1 + code[: match.start("subprogram")].count("\n"))
             if "args" in match.groupdict():
                 closing_paranthesis_start = self._find_closing_parenthesis(code[match.start("args") :])
+                if closing_paranthesis_start is None:
+                    raise RuntimeError(
+                        f"Unbalanced parenthesis in call to "
+                        f"{match.group('subprogram')!s} in {file_name!s}"
+                    )
 
                 if self._assignment_pattern.match(code[match.start("args") + closing_paranthesis_start + 1 :]):
                     continue

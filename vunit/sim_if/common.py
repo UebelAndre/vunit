@@ -8,24 +8,32 @@
 Common functions
 """
 
+from __future__ import annotations
+
+from typing import Callable
+
+from . import SimulatorInterface
 from .factory import SIMULATOR_FACTORY
 
 
-def has_simulator():
+def has_simulator() -> bool:
     return SIMULATOR_FACTORY.has_simulator
 
 
-def simulator_is(*names):
+def simulator_is(*names: str) -> bool:
     """
     Check that current simulator is any of names
     """
     supported_names = [sim.name for sim in SIMULATOR_FACTORY.supported_simulators()]
     for name in names:
         assert name in supported_names
-    return SIMULATOR_FACTORY.select_simulator().name in names
+    selected = SIMULATOR_FACTORY.select_simulator()
+    if selected is None:
+        return False
+    return selected.name in names
 
 
-def simulator_check(func):
+def simulator_check(func: Callable[[type[SimulatorInterface]], bool]) -> bool:
     """
     Check some method of the selected simulator
     """

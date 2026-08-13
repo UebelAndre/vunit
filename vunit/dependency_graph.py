@@ -10,8 +10,9 @@
 Functionality to compute a dependency graph
 """
 
+from __future__ import annotations
 
-from typing import Set, List, TypeVar, Generic, Dict, Mapping, Callable, Iterable
+from typing import Any, Callable, Generic, Iterable, Mapping, TypeVar
 
 T = TypeVar("T")
 
@@ -21,26 +22,30 @@ class DependencyGraph(Generic[T]):
     A dependency graph
     """
 
-    def __init__(self):
-        self._forward: Dict[T, Set[T]] = {}
-        self._backward: Dict[T, Set[T]] = {}
-        self._nodes: List[T] = []
+    def __init__(self) -> None:
+        self._forward: dict[T, set[T]] = {}
+        self._backward: dict[T, set[T]] = {}
+        self._nodes: list[T] = []
 
-    def toposort(self) -> List[T]:
+    def toposort(self) -> list[T]:
         """
         Perform a topological sort returning a list of nodes such that
         every node is located after its dependency nodes
         """
-        sorted_nodes: List[T] = []
+        sorted_nodes: list[T] = []
+        # ``sorted`` requires the nodes to be orderable at runtime; the type
+        # parameter is unconstrained, so we fall back to ``Any`` locally.
+        nodes_any: list[Any] = list(self._nodes)
+        graph_any: dict[Any, list[Any]] = {key: sorted(values) for key, values in self._forward.items()}
         self._visit(
-            sorted(self._nodes),  # type: ignore
-            dict((key, sorted(values)) for key, values in self._forward.items()),  # type: ignore
+            sorted(nodes_any),
+            graph_any,
             sorted_nodes.append,
         )
         sorted_nodes = list(reversed(sorted_nodes))
         return sorted_nodes
 
-    def add_node(self, node: T):
+    def add_node(self, node: T) -> None:
         self._nodes.append(node)
 
     def add_dependency(self, start: T, end: T) -> bool:
@@ -66,13 +71,13 @@ class DependencyGraph(Generic[T]):
         nodes: Iterable[T],
         graph: Mapping[T, Iterable[T]],
         callback: Callable[[T], None],
-    ):
+    ) -> None:
         """
         Follow graph edges starting from the nodes iteratively
         returning all the nodes visited
         """
 
-        def visit(node):
+        def visit(node: T) -> None:
             """
             Visit a single node and all following nodes in the graph
             that have not already been visisted.
@@ -93,34 +98,34 @@ class DependencyGraph(Generic[T]):
             visited.add(node)
             callback(node)
 
-        visited: Set[T] = set()
-        path: Set[T] = set()
-        path_ordered: List[T] = []
+        visited: set[T] = set()
+        path: set[T] = set()
+        path_ordered: list[T] = []
         for node in nodes:
             if node not in visited:
                 path = set()
                 path_ordered = []
                 visit(node)
 
-    def get_dependent(self, nodes: Iterable[T]) -> Set[T]:
+    def get_dependent(self, nodes: Iterable[T]) -> set[T]:
         """
         Get all nodes which are directly or indirectly dependent on
         the input nodes
         """
-        result: Set[T] = set()
+        result: set[T] = set()
         self._visit(nodes, self._forward, result.add)
         return result
 
-    def get_dependencies(self, nodes: Iterable[T]) -> Set[T]:
+    def get_dependencies(self, nodes: Iterable[T]) -> set[T]:
         """
         Get all nodes which are directly or indirectly dependencies of
         the input nodes
         """
-        result: Set[T] = set()
+        result: set[T] = set()
         self._visit(nodes, self._backward, result.add)
         return result
 
-    def get_direct_dependencies(self, node: T) -> Set[T]:
+    def get_direct_dependencies(self, node: T) -> set[T]:
         """
         Get the direct dependencies of node
         """
@@ -132,9 +137,9 @@ class CircularDependencyException(Exception):
     Raised when there are circular dependencies
     """
 
-    def __init__(self, path):
+    def __init__(self, path: list[Any]) -> None:
         Exception.__init__(self)
         self.path = path
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"CircularDependencyException({self.path!r})"

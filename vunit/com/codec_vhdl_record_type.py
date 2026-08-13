@@ -7,6 +7,8 @@
 """
 Module containing the CodecVHDLRecordType class.
 """
+from __future__ import annotations
+
 from string import Template
 from vunit.vhdl_parser import VHDLRecordType
 from vunit.com.codec_datatype_template import DatatypeCodecTemplate
@@ -15,7 +17,7 @@ from vunit.com.codec_datatype_template import DatatypeCodecTemplate
 class CodecVHDLRecordType(VHDLRecordType):
     """Class derived from VHDLRecordType to provide codec generator functionality for the record type."""
 
-    def generate_codecs_and_support_functions(self):
+    def generate_codecs_and_support_functions(self) -> tuple[str, str]:
         """Generate codecs and communication support functions for the record type."""
 
         template = RecordCodecTemplate()
@@ -55,7 +57,7 @@ class CodecVHDLRecordType(VHDLRecordType):
 class RecordCodecTemplate(DatatypeCodecTemplate):
     """This class contains record templates."""
 
-    record_to_string_definition = Template(
+    record_to_string_definition: Template = Template(
         """\
   function to_string (
     constant data : $type)
@@ -66,7 +68,7 @@ class RecordCodecTemplate(DatatypeCodecTemplate):
 """
     )
 
-    record_codec_definition = Template(
+    record_codec_definition: Template = Template(
         """\
   function encode (
     constant data : $type)

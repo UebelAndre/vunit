@@ -8,18 +8,27 @@
 UI classes SourceFile and SourceFileList
 """
 
+from __future__ import annotations
+
+from typing import Any, Iterable, TYPE_CHECKING
 from .. import ostools
 
+if TYPE_CHECKING:
+    from ..project import Project
+    from ..source_file import SourceFile as ProjectSourceFile
+    from . import VUnit
+    from .library import Library
 
-class SourceFileList(list):
+
+class SourceFileList(list["SourceFile"]):
     """
     A list of :class:`.SourceFile`
     """
 
-    def __init__(self, source_files):
+    def __init__(self, source_files: Iterable[SourceFile]) -> None:
         list.__init__(self, source_files)
 
-    def set_compile_option(self, name, value):
+    def set_compile_option(self, name: str, value: Any) -> None:
         """
         Set compile option for all files in the list
 
@@ -35,7 +44,7 @@ class SourceFileList(list):
         for source_file in self:
             source_file.set_compile_option(name, value)
 
-    def add_compile_option(self, name, value):
+    def add_compile_option(self, name: str, value: Any) -> None:
         """
         Add compile option to all files in the list
 
@@ -45,7 +54,7 @@ class SourceFileList(list):
         for source_file in self:
             source_file.add_compile_option(name, value)
 
-    def add_dependency_on(self, source_file):
+    def add_dependency_on(self, source_file: SourceFile | Iterable[SourceFile]) -> None:
         """
         Add manual dependency of these files on other file(s)
 
@@ -67,37 +76,42 @@ class SourceFile(object):
     A single file
     """
 
-    def __init__(self, source_file, project, ui):
+    def __init__(self, source_file: ProjectSourceFile, project: Project, ui: VUnit) -> None:
         self._source_file = source_file
         self._project = project
         self._ui = ui
 
     @property
-    def name(self):
+    def name(self) -> str:
         """
         The name of the SourceFile
         """
         return ostools.simplify_path(self._source_file.name)
 
     @property
-    def vhdl_standard(self):
+    def vhdl_standard(self) -> str | None:
         """
         The VHDL standard applicable to the file,
         None if not a VHDL file
         """
         if self._source_file.file_type == "vhdl":
+            # pylint: disable=import-outside-toplevel  # local import avoids cycle
+            from ..source_file import VHDLSourceFile
+
+            if not isinstance(self._source_file, VHDLSourceFile):
+                raise RuntimeError("Source file reports file_type='vhdl' but is not a VHDLSourceFile instance")
             return str(self._source_file.get_vhdl_standard())
 
         return None
 
     @property
-    def library(self):
+    def library(self) -> Library:
         """
         The library of the source file
         """
         return self._ui.library(self._source_file.library.name)
 
-    def set_compile_option(self, name, value):
+    def set_compile_option(self, name: str, value: Any) -> None:
         """
         Set compile option for this file
 
@@ -112,7 +126,7 @@ class SourceFile(object):
         """
         self._source_file.set_compile_option(name, value)
 
-    def add_compile_option(self, name, value):
+    def add_compile_option(self, name: str, value: Any) -> None:
         """
         Add compile option to this file
 
@@ -121,7 +135,7 @@ class SourceFile(object):
         """
         self._source_file.add_compile_option(name, value)
 
-    def get_compile_option(self, name):
+    def get_compile_option(self, name: str) -> Any:
         """
         Return compile option of this file
 
@@ -129,7 +143,7 @@ class SourceFile(object):
         """
         return self._source_file.get_compile_option(name)
 
-    def add_dependency_on(self, source_file):
+    def add_dependency_on(self, source_file: SourceFile | Iterable[SourceFile]) -> None:
         """
         Add manual dependency of this file other file(s)
 

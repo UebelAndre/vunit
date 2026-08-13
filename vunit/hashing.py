@@ -8,10 +8,12 @@
 Wrapper arround selected hash method
 """
 
+from __future__ import annotations
+
 import hashlib
 
 
-def hash_string(string):
+def hash_string(string: str) -> str:
     """
     returns hash of bytes
     """

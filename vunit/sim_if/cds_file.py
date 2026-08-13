@@ -8,11 +8,14 @@
 Handles Cadence Incisive .cds files
 """
 
+from __future__ import annotations
+
+import os
 import re
 from ..ostools import read_file, write_file
 
 
-class CDSFile(dict):
+class CDSFile(dict[str, str]):
     """
     Handles Cadence Incisive .cds files
 
@@ -22,14 +25,14 @@ class CDSFile(dict):
     _re_define = re.compile(r'\s*define\s+([a-zA-Z0-9_]+)\s+"?(.*?)"?(#|$)', re.IGNORECASE)
 
     @classmethod
-    def parse(cls, file_name):
+    def parse(cls, file_name: str | os.PathLike[str]) -> "CDSFile":
         """
         Parse file_name and create CDSFile instance
         """
         contents = read_file(file_name)
 
-        other_lines = []
-        defines = {}
+        other_lines: list[str] = []
+        defines: dict[str, str] = {}
         for line in contents.splitlines():
             match = cls._re_define.match(line)
 
@@ -39,13 +42,17 @@ class CDSFile(dict):
                 defines[match.group(1)] = match.group(2)
         return cls(defines, other_lines)
 
-    def __init__(self, defines=None, other_lines=None):
+    def __init__(
+        self,
+        defines: dict[str, str] | None = None,
+        other_lines: list[str] | None = None,
+    ) -> None:
         defines = {} if defines is None else defines
         other_lines = [] if other_lines is None else other_lines
         dict.__init__(self, defines)
         self._other_lines = other_lines
 
-    def write(self, file_name):
+    def write(self, file_name: str | os.PathLike[str]) -> None:
         """
         Write cds file to file named 'file_name'
         """

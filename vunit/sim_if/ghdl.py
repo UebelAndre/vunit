@@ -8,6 +8,9 @@
 Interface for GHDL simulator
 """
 
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
 from os import environ, makedirs, remove
 import logging
@@ -17,12 +20,16 @@ import re
 import shutil
 from json import dump
 from sys import stdout  # To avoid output catched in non-verbose mode
+from typing import TYPE_CHECKING, Any
 from ..exceptions import CompileError
 from ..ostools import Process
+from ..vhdl_standard import VHDL, VHDLStandard
 from . import SimulatorInterface, ListOfStringOption, StringOption, BooleanOption
 from . import check_executable
-from ..vhdl_standard import VHDL
 from ._viewermixin import ViewerMixin
+
+if TYPE_CHECKING:
+    from ..project import Project
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +59,7 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
     ]
 
     @staticmethod
-    def add_arguments(parser):
+    def add_arguments(parser: argparse.ArgumentParser) -> None:
         """
         Add command line arguments
         """
@@ -68,12 +75,19 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
         group.add_argument("--viewer", default=None, help="Waveform viewer to use")
 
     @classmethod
-    def from_args(cls, args, output_path, **kwargs):
+    def from_args(
+        cls,
+        args: argparse.Namespace,
+        output_path: str,
+        **kwargs: Any,
+    ) -> "GHDLInterface":
         """
         Create instance from args namespace
         """
         prefix = cls.find_prefix()
         check_executable("GHDL", prefix, cls.executable)
+        if prefix is None:
+            raise RuntimeError("GHDL prefix not found")
 
         return cls(
             output_path=output_path,
@@ -86,7 +100,7 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
         )
 
     @classmethod
-    def find_prefix_from_path(cls):
+    def find_prefix_from_path(cls) -> str | None:
         """
         Find first valid ghdl toolchain prefix
         """
@@ -94,16 +108,18 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
-        output_path,
-        prefix,
+        output_path: str,
+        prefix: str | None,
         *,
-        gui=False,
-        viewer_fmt=None,
-        viewer_args="",
-        viewer=None,
-        backend="llvm",
-    ):
+        gui: bool = False,
+        viewer_fmt: str | None = None,
+        viewer_args: str = "",
+        viewer: str | None = None,
+        backend: str = "llvm",
+    ) -> None:
         SimulatorInterface.__init__(self, output_path, gui)
+        if prefix is None:
+            raise RuntimeError("GHDL prefix not found")
         ViewerMixin.__init__(
             self,
             gui=gui,
@@ -112,44 +128,48 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
             viewer_args=viewer_args,
         )
 
-        self._prefix = prefix
-        self._project = None
+        self._prefix: str = prefix
+        self._project: Project | None = None
 
         self._backend = backend
-        self._vhdl_standard = None
-        self._coverage_test_dirs = set()  # For gcov
-        self._coverage_files = set()  # For --coverage
-        self._version = self.determine_version(self.find_prefix())
+        self._vhdl_standard: VHDLStandard | None = None
+        self._coverage_test_dirs: set[str] = set()  # For gcov
+        self._coverage_files: set[str] = set()  # For --coverage
+        # ``prefix`` is the constructor argument; use it directly so the version
+        # matches the executable this instance will actually invoke.
+        self._version = self.determine_version(prefix)
 
-    def has_valid_exit_code(self):  # pylint: disable=arguments-differ
+    def has_valid_exit_code(self) -> bool:
         """
         Return if the simulation should fail with nonzero exit codes
         """
+        if self._vhdl_standard is None:
+            return False
         return self._vhdl_standard >= VHDL.STD_2008
 
     @classmethod
-    def _get_version_output(cls, prefix):
+    def _get_version_output(cls, prefix: str) -> str:
         """
         Get the output of 'ghdl --version'
         """
         return subprocess.check_output([str(Path(prefix) / cls.executable), "--version"]).decode()
 
     @classmethod
-    def _get_help_output(cls, prefix):
+    def _get_help_output(cls, prefix: str) -> str:
         """
         Get the output of 'ghdl --help'
         """
         return subprocess.check_output([str(Path(prefix) / cls.executable), "--help"]).decode()
 
     @classmethod
-    def determine_coverage(cls, prefix):
+    def determine_coverage(cls, prefix: str) -> bool:
         """
         Determine if GHDL has builtin coverage support
         """
         return not re.match(r"coverage ", cls._get_help_output(prefix)) is None
 
     @classmethod
-    def determine_backend(cls, prefix):
+    def determine_backend(cls, prefix: str) -> str:
         """
         Determine the GHDL backend
         """
@@ -174,55 +194,61 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
         raise AssertionError("No known GHDL back-end could be detected from running 'ghdl --version'")
 
     @classmethod
-    def determine_version(cls, prefix):
+    def determine_version(cls, prefix: str) -> float:
         """
         Determine the GHDL version
         """
-        return float(
-            re.match(
-                r"GHDL ([0-9]*\.[0-9]*).*\(.*\) \[Dunoon edition\]",
-                cls._get_version_output(prefix),
-            ).group(1)
+        version_match = re.match(
+            r"GHDL ([0-9]*\.[0-9]*).*\(.*\) \[Dunoon edition\]",
+            cls._get_version_output(prefix),
         )
+        if version_match is None:
+            raise RuntimeError("Failed to parse GHDL version from `ghdl --version` output")
+        return float(version_match.group(1))
 
     @classmethod
-    def supports_vhdl_call_paths(cls):
+    def supports_vhdl_call_paths(cls) -> bool:
         """
         Returns True when this simulator supports VHDL-2019 call paths
         """
         return False
 
     @classmethod
-    def supports_vhdl_package_generics(cls):
+    def supports_vhdl_package_generics(cls) -> bool:
         """
         Returns True when this simulator supports VHDL package generics
         """
         return True
 
     @classmethod
-    def supports_vhpi(cls):
+    def supports_vhpi(cls) -> bool:
         """
         Returns True when the simulator supports VHPI
         """
-        return (cls.determine_backend(cls.find_prefix()) != "mcode") or (
-            cls.determine_version(cls.find_prefix()) > 0.36
+        prefix = cls.find_prefix()
+        if prefix is None:
+            raise RuntimeError("GHDL prefix not found for VHPI support query")
+        return (cls.determine_backend(prefix) != "mcode") or (
+            cls.determine_version(prefix) > 0.36
         )
 
     @classmethod
-    def supports_coverage(cls):
+    def supports_coverage(cls) -> bool:
         """
         Returns True when the simulator supports coverage
         """
         prefix = cls.find_prefix()
+        if prefix is None:
+            raise RuntimeError("GHDL prefix not found for coverage support query")
         return cls.determine_backend(prefix) == "gcc" or cls.determine_coverage(prefix)
 
-    def _has_output_flag(self):
+    def _has_output_flag(self) -> bool:
         """
         Returns if backend supports output flag
         """
         return self._backend in ("llvm", "gcc")
 
-    def setup_library_mapping(self, project):
+    def setup_library_mapping(self, project: Any) -> None:
         """
         Setup library mapping
         """
@@ -244,7 +270,7 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
         else:
             self._vhdl_standard = list(vhdl_standards)[0]
 
-    def compile_source_file_command(self, source_file):
+    def compile_source_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a single source_file
         """
@@ -254,7 +280,7 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
         LOGGER.error("Unknown file type: %s", source_file.file_type)
         raise CompileError
 
-    def _std_str(self, vhdl_standard):
+    def _std_str(self, vhdl_standard: VHDLStandard) -> str:
         """
         Convert standard to format of GHDL command line flag
         """
@@ -274,7 +300,7 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
 
         raise ValueError(f"Invalid VHDL standard {vhdl_standard!s}")
 
-    def compile_vhdl_file_command(self, source_file):
+    def compile_vhdl_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a vhdl file
         """
@@ -288,6 +314,8 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
             f"--work={source_file.library.name!s}",
             f"--std={self._std_str(source_file.get_vhdl_standard())!s}",
         ]
+        if self._project is None:
+            raise RuntimeError("setup_library_mapping() must be called before compiling source files")
         for library in self._project.get_libraries():
             cmd += [f"-P{library.directory!s}"]
 
@@ -301,12 +329,21 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
         cmd += [source_file.name]
         return cmd
 
-    def _get_command(
-        self, config, output_path, elaborate_only, ghdl_e, test_suite_name, wave_file
-    ):  # pylint: disable=too-many-branches,too-many-arguments,too-many-positional-arguments
+    def _get_command(  # pylint: disable=too-many-branches,too-many-positional-arguments
+        self,
+        config: Any,
+        output_path: str,
+        elaborate_only: bool,
+        ghdl_e: bool,
+        test_suite_name: str,
+        wave_file: str | None,
+    ) -> list[str]:  # pylint: disable=too-many-branches,too-many-arguments,too-many-positional-arguments
         """
         Return GHDL simulation command
         """
+        if self._project is None or self._vhdl_standard is None:
+            raise RuntimeError("setup_library_mapping()/compile_project() must be called before building commands")
+
         cmd = [str(Path(self._prefix) / self.executable)]
 
         cmd += ["-e"] if ghdl_e else ["--elab-run"]
@@ -369,7 +406,13 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
 
         return cmd
 
-    def simulate(self, output_path, test_suite_name, config, elaborate_only):  # pylint: disable=too-many-locals
+    def simulate(
+        self,
+        output_path: str,
+        test_suite_name: str,
+        config: Any,
+        elaborate_only: bool,
+    ) -> bool:  # pylint: disable=too-many-locals
         """
         Simulate with entity as top level using generics
         """
@@ -381,6 +424,7 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
 
         ghdl_e = elaborate_only and config.sim_options.get("ghdl.elab_e", False)
 
+        data_file_name: str | None
         if self._viewer_fmt is not None:
             data_file_name = str(Path(script_path) / f"wave.{self._viewer_fmt!s}")
             if Path(data_file_name).exists():
@@ -417,20 +461,22 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
             )
 
         if self._gui and not elaborate_only:
-            cmd = [self._get_viewer(config)] + shlex.split(self._viewer_args) + [data_file_name]
+            viewer_cmd = [self._get_viewer(config)] + shlex.split(self._viewer_args)
+            if data_file_name is not None:
+                viewer_cmd += [data_file_name]
 
             init_file = config.sim_options.get(
                 self.name + ".viewer_script.gui", config.sim_options.get(self.name + ".gtkwave_script.gui", None)
             )
             if init_file is not None:
-                cmd += ["--script", str(Path(init_file).resolve())]
+                viewer_cmd += ["--script", str(Path(init_file).resolve())]
 
-            stdout.write(" ".join(cmd) + "\n")
-            subprocess.call(cmd)
+            stdout.write(" ".join(viewer_cmd) + "\n")
+            subprocess.call(viewer_cmd)
 
         return status
 
-    def _compile_source_file(self, source_file, printer):
+    def _compile_source_file(self, source_file: Any, printer: Any) -> bool:
         """
         Runs parent command for compilation, and moves any .gcno files to the compilation output
         """
@@ -448,7 +494,7 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
 
         return compilation_ok
 
-    def _merge_coverage_gcc(self, output_dir, args=None):
+    def _merge_coverage_gcc(self, output_dir: Path, args: list[str] | None = None) -> None:
         """
         Merge coverage (for gcc backend)
         """
@@ -475,11 +521,13 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
         gcda_dir = gcda_dirs.pop()
 
         # Add compile-time .gcno files as well, they are needed for the report
+        if self._project is None:
+            raise RuntimeError("setup_library_mapping() must be called before merging coverage")
         for library in self._project.get_libraries():
             for gcno_file in Path(library.directory).glob("*.gcno"):
                 shutil.copy(gcno_file, gcda_dir)
 
-    def _merge_coverage_jit(self, output_dir, args=None):
+    def _merge_coverage_jit(self, output_dir: Path, args: list[str] | None = None) -> None:
         """
         Merge coverage (for jit backend)
         """
@@ -493,7 +541,7 @@ class GHDLInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-man
         cmd.extend(list(self._coverage_files))
         subprocess.call(cmd)
 
-    def merge_coverage(self, file_name, args=None):
+    def merge_coverage(self, file_name: str, args: list[str] | None = None) -> None:
         """
         Merge coverage from all test cases
         """

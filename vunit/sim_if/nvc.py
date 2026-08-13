@@ -8,6 +8,9 @@
 Interface for NVC simulator
 """
 
+from __future__ import annotations
+
+import argparse
 from multiprocessing import cpu_count
 from pathlib import Path
 from os import environ, makedirs, remove
@@ -16,12 +19,16 @@ import subprocess
 import shlex
 import re
 from sys import stdout  # To avoid output catched in non-verbose mode
+from typing import TYPE_CHECKING, Any
 from ..exceptions import CompileError
 from ..ostools import Process, file_exists
 from . import SimulatorInterface, ListOfStringOption, StringOption
 from . import run_command, check_executable
 from ._viewermixin import ViewerMixin
-from ..vhdl_standard import VHDL
+from ..vhdl_standard import VHDL, VHDLStandard
+
+if TYPE_CHECKING:
+    from ..project import Project
 
 LOGGER = logging.getLogger(__name__)
 
@@ -51,7 +58,12 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
     ]
 
     @classmethod
-    def from_args(cls, args, output_path, **kwargs):
+    def from_args(
+        cls,
+        args: argparse.Namespace,
+        output_path: str,
+        **kwargs: Any,
+    ) -> "NVCInterface":
         """
         Create instance from args namespace
         """
@@ -69,26 +81,36 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
         )
 
     @classmethod
-    def find_prefix_from_path(cls):
+    def find_prefix_from_path(cls) -> str | None:
         """
         Find first valid NVC toolchain prefix
         """
         return cls.find_toolchain([cls.executable])
 
     def __init__(  # pylint: disable=too-many-arguments
-        self, output_path, prefix, *, num_threads, gui=False, viewer_fmt=None, viewer_args="", viewer=None
-    ):
+        self,
+        output_path: str,
+        prefix: str | None,
+        *,
+        num_threads: int | None,
+        gui: bool = False,
+        viewer_fmt: str | None = None,
+        viewer_args: str = "",
+        viewer: str | None = None,
+    ) -> None:
         SimulatorInterface.__init__(self, output_path, gui)
+        if prefix is None:
+            raise RuntimeError("NVC prefix not found")
         if viewer_fmt == "ghw":
             LOGGER.warning("NVC does not support ghw, defaulting to fst")
             viewer_fmt = None  # Defaults to FST later
         ViewerMixin.__init__(self, gui=gui, viewer=viewer, viewer_fmt=viewer_fmt, viewer_args=viewer_args)
 
-        self._prefix = prefix
-        self._project = None
+        self._prefix: str = prefix
+        self._project: Project | None = None
 
-        self._vhdl_standard = None
-        self._coverage_files = set()
+        self._vhdl_standard: VHDLStandard | None = None
+        self._coverage_files: set[str] = set()
         (major, minor) = self.determine_version(prefix)
         self._supports_jit = major > 1 or (major == 1 and minor >= 9)
         self._ieee_warnings_global = major > 1 or (major == 1 and minor >= 16)
@@ -101,21 +123,23 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
         # of VUnit threads and the number of available CPUs.
         environ["NVC_CONCURRENT_JOBS"] = str(num_threads or cpu_count())
 
-    def has_valid_exit_code(self):  # pylint: disable=arguments-differ
+    def has_valid_exit_code(self) -> bool:
         """
         Return if the simulation should fail with nonzero exit codes
         """
+        if self._vhdl_standard is None:
+            return False
         return self._vhdl_standard >= VHDL.STD_2008
 
     @classmethod
-    def _get_version_output(cls, prefix):
+    def _get_version_output(cls, prefix: str) -> str:
         """
         Get the output of 'nvc --version'
         """
         return subprocess.check_output([str(Path(prefix) / cls.executable), "--version"]).decode()
 
     @classmethod
-    def determine_version(cls, prefix):
+    def determine_version(cls, prefix: str) -> tuple[int, int]:
         """
         Determine the NVC version
         """
@@ -127,34 +151,34 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
         return (int(match.group(1)), int(match.group(2)))
 
     @classmethod
-    def supports_vhpi(cls):
+    def supports_vhpi(cls) -> bool:
         """
         Returns True when the simulator supports VHPI
         """
         return True
 
     @classmethod
-    def supports_coverage(cls):
+    def supports_coverage(cls) -> bool:
         """
         Returns True when the simulator supports coverage
         """
         return True
 
     @classmethod
-    def supports_vhdl_call_paths(cls):
+    def supports_vhdl_call_paths(cls) -> bool:
         """
         Returns True when this simulator supports VHDL-2019 call paths
         """
         return True
 
     @classmethod
-    def supports_vhdl_package_generics(cls):
+    def supports_vhdl_package_generics(cls) -> bool:
         """
         Returns True when this simulator supports VHDL package generics
         """
         return True
 
-    def setup_library_mapping(self, project):
+    def setup_library_mapping(self, project: Any) -> None:
         """
         Setup library mapping
         """
@@ -185,7 +209,7 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
         else:
             self._vhdl_standard = list(vhdl_standards)[0]
 
-    def compile_source_file_command(self, source_file):
+    def compile_source_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a single source_file
         """
@@ -196,7 +220,7 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
         raise CompileError
 
     @staticmethod
-    def _std_str(vhdl_standard):
+    def _std_str(vhdl_standard: VHDLStandard) -> str:
         """
         Convert standard to format of NVC command line flag
         """
@@ -214,7 +238,7 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
 
         raise ValueError(f"Invalid VHDL standard {vhdl_standard}")
 
-    def _get_command(self, std, worklib, workpath):
+    def _get_command(self, std: VHDLStandard, worklib: str, workpath: str) -> list[str]:
         """
         Get basic NVC command with global options
         """
@@ -224,12 +248,14 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
             f"--std={self._std_str(std)}",
         ]
 
+        if self._project is None:
+            raise RuntimeError("setup_library_mapping() must be called before building NVC commands")
         for library in self._project.get_libraries():
             cmd += [f"--map={library.name}:{library.directory}"]
 
         return cmd
 
-    def compile_vhdl_file_command(self, source_file):
+    def compile_vhdl_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a VHDL file
         """
@@ -245,9 +271,13 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
         cmd += [source_file.name]
         return cmd
 
-    def simulate(
-        self, output_path, test_suite_name, config, elaborate_only
-    ):  # pylint: disable=too-many-branches, disable=too-many-statements, disable=too-many-locals
+    def simulate(  # pylint: disable=too-many-branches,too-many-locals,too-many-statements
+        self,
+        output_path: str,
+        test_suite_name: str,
+        config: Any,
+        elaborate_only: bool,
+    ) -> bool:  # pylint: disable=too-many-branches, disable=too-many-statements, disable=too-many-locals
         """
         Simulate with entity as top level using generics
         """
@@ -257,9 +287,14 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
         if not script_path.exists():
             makedirs(script_path)
 
+        if self._project is None:
+            raise RuntimeError("setup_library_mapping() must be called before simulating")
+        if self._vhdl_standard is None:
+            raise RuntimeError("setup_library_mapping() must be called before simulating")
         libdir = self._project.get_library(config.library_name).directory
         cmd = self._get_command(self._vhdl_standard, config.library_name, libdir)
 
+        wave_file: Path | None
         if self._gui:
             wave_file = script_path / (f"{config.entity_name}.{self._viewer_fmt or 'fst'}")
             if wave_file.exists():
@@ -349,7 +384,7 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
 
         return status
 
-    def merge_coverage(self, file_name, args=None):
+    def merge_coverage(self, file_name: str, args: list[str] | None = None) -> None:
         """
         Merge coverage from all test cases.
         """
@@ -360,7 +395,7 @@ class NVCInterface(SimulatorInterface, ViewerMixin):  # pylint: disable=too-many
             )
             return
 
-        coverage_files = []
+        coverage_files: list[str] = []
 
         for coverage_file in self._coverage_files:
             if file_exists(coverage_file):

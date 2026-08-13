@@ -8,17 +8,19 @@
 Provide test reporting functionality
 """
 
+from __future__ import annotations
 
+from typing import Any, Iterator
 from xml.etree import ElementTree
 import os
 import socket
 import re
 from pathlib import Path
-from vunit.color_printer import COLOR_PRINTER
+from vunit.color_printer import COLOR_PRINTER, ColorPrinter
 from vunit.ostools import read_file
 
 
-def get_parsed_time(time_in, max_time=0):
+def get_parsed_time(time_in: float, max_time: float = 0) -> str:
     """
     Return string representation of input value
     in hours, minutes and seconds.
@@ -61,32 +63,32 @@ class TestReport(object):
     Collect reports from running testcases
     """
 
-    def __init__(self, printer=COLOR_PRINTER):
-        self._test_results = {}
-        self._test_names_in_order = []
-        self._printer = printer
-        self._real_total_time = 0.0
-        self._expected_num_tests = 0
+    def __init__(self, printer: ColorPrinter = COLOR_PRINTER) -> None:
+        self._test_results: dict[str, TestResult] = {}
+        self._test_names_in_order: list[str] = []
+        self._printer: ColorPrinter = printer
+        self._real_total_time: float = 0.0
+        self._expected_num_tests: int = 0
 
-    def set_real_total_time(self, real_total_time):
+    def set_real_total_time(self, real_total_time: float) -> None:
         """
         Set the real total execution time
         """
         self._real_total_time = real_total_time
 
-    def set_expected_num_tests(self, expected_num_tests):
+    def set_expected_num_tests(self, expected_num_tests: int) -> None:
         """
         Set the number of tests that we expect to run
         """
         self._expected_num_tests = expected_num_tests
 
-    def num_tests(self):
+    def num_tests(self) -> int:
         """
         Return the number of tests in the report
         """
         return len(self._test_results)
 
-    def add_result(self, *args, **kwargs):
+    def add_result(self, *args: Any, **kwargs: Any) -> None:
         """
         Add a a test result
         """
@@ -94,20 +96,20 @@ class TestReport(object):
         self._test_results[result.name] = result
         self._test_names_in_order.append(result.name)
 
-    def _last_test_result(self):
+    def _last_test_result(self) -> TestResult:
         """
         Return the latest test result or fail
         """
         return self._test_results[self._test_names_in_order[-1]]
 
-    def _test_results_in_order(self):
+    def _test_results_in_order(self) -> Iterator[TestResult]:
         """
         Return the test results in the order they were added
         """
         for name in self._test_names_in_order:
             yield self.result_of(name)
 
-    def print_latest_status(self, total_tests):
+    def print_latest_status(self, total_tests: int) -> None:
         """
         Print the latest status including the last test run and the
         total number of passed, failed and skipped tests
@@ -121,7 +123,7 @@ class TestReport(object):
         elif result.skipped:
             self._printer.write("skip", fg="rgi")
         else:
-            assert False
+            raise RuntimeError(f"Test result {result.name!r} has unknown status")
 
         args = []
         args.append(f"P={len(passed):d}")
@@ -131,19 +133,19 @@ class TestReport(object):
 
         self._printer.write(f" ({' '.join(args)!s}) {result.name!s} ({get_parsed_time(result.time)})\n")
 
-    def all_ok(self):
+    def all_ok(self) -> bool:
         """
         Return true if all test passed
         """
         return all(test_result.passed for test_result in self._test_results.values())
 
-    def has_test(self, test_name):
+    def has_test(self, test_name: str) -> bool:
         return test_name in self._test_results
 
-    def result_of(self, test_name):
+    def result_of(self, test_name: str) -> TestResult:
         return self._test_results[test_name]
 
-    def print_str(self):
+    def print_str(self) -> None:
         """
         Print the report as a colored string
         """
@@ -195,7 +197,10 @@ class TestReport(object):
             self._printer.write("All passed!", fg="gi")
         self._printer.write("\n")
 
-        assert len(all_tests) <= self._expected_num_tests
+        if len(all_tests) > self._expected_num_tests:
+            raise RuntimeError(
+                f"Got more test results ({len(all_tests):d}) than expected ({self._expected_num_tests:d})"
+            )
         if len(all_tests) < self._expected_num_tests:
             self._printer.write(
                 f"WARNING: Test execution aborted after running "
@@ -204,13 +209,13 @@ class TestReport(object):
             )
             self._printer.write("\n")
 
-    def _split(self):
+    def _split(self) -> tuple[list[TestResult], list[TestResult], list[TestResult]]:
         """
         Split the test cases into passed and failures
         """
-        failures = []
-        passed = []
-        skipped = []
+        failures: list[TestResult] = []
+        passed: list[TestResult] = []
+        skipped: list[TestResult] = []
         for result in self._test_results_in_order():
             if result.passed:
                 passed.append(result)
@@ -221,7 +226,7 @@ class TestReport(object):
 
         return passed, failures, skipped
 
-    def to_junit_xml_str(self, xunit_xml_format="jenkins"):
+    def to_junit_xml_str(self, xunit_xml_format: str = "jenkins") -> str:
         """
         Convert test report to a junit xml string
         """
@@ -238,10 +243,10 @@ class TestReport(object):
         for result in self._test_results_in_order():
             root.append(result.to_xml(xunit_xml_format))
 
-        xml = ElementTree.tostring(root, encoding="unicode")
+        xml: str = ElementTree.tostring(root, encoding="unicode")
         return xml
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[TestResult]:
         return iter(self._test_results.values())
 
 
@@ -250,17 +255,17 @@ class TestStatus(object):
     The status of a test
     """
 
-    def __init__(self, name):
+    def __init__(self, name: str) -> None:
         self._name = name
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.name == other.name
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"TestStatus({self._name!r})"
 
 
@@ -274,10 +279,19 @@ class TestResult(object):
     Represents the result of a single test case
     """
 
-    def __init__(
-        self, name, status, time, output_file_name, *, test_suite_name, start_time, seed
-    ):  # pylint: disable=too-many-arguments
-        assert status in (PASSED, FAILED, SKIPPED)
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        name: str,
+        status: TestStatus,
+        time: float,
+        output_file_name: str,
+        *,
+        test_suite_name: str,
+        start_time: float,
+        seed: str | None,
+    ) -> None:  # pylint: disable=too-many-arguments
+        if status not in (PASSED, FAILED, SKIPPED):
+            raise ValueError(f"Invalid test status {status!r}")
         self.name = name
         self._status = status
         self.time = time
@@ -287,7 +301,7 @@ class TestResult(object):
         self.seed = seed
 
     @property
-    def output(self):
+    def output(self) -> str:
         """
         Return test output
         """
@@ -299,18 +313,18 @@ class TestResult(object):
         return f"Failed to read output file: {self._output_file_name!s}"
 
     @property
-    def passed(self):
+    def passed(self) -> bool:
         return self._status == PASSED
 
     @property
-    def skipped(self):
+    def skipped(self) -> bool:
         return self._status == SKIPPED
 
     @property
-    def failed(self):
+    def failed(self) -> bool:
         return self._status == FAILED
 
-    def print_status(self, printer, padding=0, max_time=0):
+    def print_status(self, printer: ColorPrinter, padding: int = 0, max_time: float = 0) -> None:
         """
         Print the status and runtime of this test result
         """
@@ -328,7 +342,7 @@ class TestResult(object):
 
         printer.write(f"{self.name + (' ' * my_padding)} ({get_parsed_time(self.time, max_time)})\n")
 
-    def to_xml(self, xunit_xml_format):
+    def to_xml(self, xunit_xml_format: str) -> ElementTree.Element:
         """
         Convert the test result to ElementTree XML object
         """
@@ -359,7 +373,7 @@ class TestResult(object):
             skipped.attrib["message"] = "Skipped"
         return test
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert a subset of the test result to a dictionary
         """

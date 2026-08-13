@@ -8,10 +8,13 @@
 Provides capability to print in color to the terminal in both Windows and Linux.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import ctypes
 from ctypes import Structure, c_short, c_ushort, byref
+from typing import IO, Any
 from vunit.ostools import IS_WINDOWS_SYSTEM
 
 
@@ -26,10 +29,16 @@ class ColorPrinter(object):
     INTENSITY = "i"
     WHITE = RED + GREEN + BLUE
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
-    def write(self, text, output_file=None, fg=None, bg=None):  # pylint: disable=unused-argument
+    def write(  # pylint: disable=unused-argument
+        self,
+        text: str,
+        output_file: IO[str] | None = None,
+        fg: str | None = None,
+        bg: str | None = None,
+    ) -> None:
         """
         Print the text in color to the output_file
         uses stdout if output_file is None
@@ -41,10 +50,16 @@ class NoColorPrinter(ColorPrinter):
     Dummy printer that does not print in color
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         ColorPrinter.__init__(self)
 
-    def write(self, text, output_file=None, fg=None, bg=None):  # pylint: disable=unused-argument
+    def write(  # pylint: disable=unused-argument
+        self,
+        text: str,
+        output_file: IO[str] | None = None,
+        fg: str | None = None,
+        bg: str | None = None,
+    ) -> None:
         """
         Print the text in color to the output_file
         uses stdout if output_file is None
@@ -59,10 +74,16 @@ class LinuxColorPrinter(ColorPrinter):
     Print in color on linux
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         ColorPrinter.__init__(self)
 
-    def write(self, text, output_file=None, fg=None, bg=None):
+    def write(
+        self,
+        text: str,
+        output_file: IO[str] | None = None,
+        fg: str | None = None,
+        bg: str | None = None,
+    ) -> None:
         """
         Print the text in color to the output_file
         uses stdout if output_file is None
@@ -74,7 +95,7 @@ class LinuxColorPrinter(ColorPrinter):
         output_file.write(text)
 
     @staticmethod
-    def _to_code(rgb):
+    def _to_code(rgb: str) -> int:
         """
         Translate strings containing 'rgb' characters to numerical color codes
         """
@@ -89,13 +110,13 @@ class LinuxColorPrinter(ColorPrinter):
             code += 4
         return code
 
-    def _ansi_wrap(self, text, fg, bg):
+    def _ansi_wrap(self, text: str, fg: str | None, bg: str | None) -> str:
         """
         Wrap the text into ANSI color escape codes
         fg -- the foreground color
         bg -- the background color
         """
-        codes = []
+        codes: list[int] = []
 
         if fg is not None:
             codes.append(30 + self._to_code(fg))
@@ -141,25 +162,44 @@ class ConsoleScreenBufferInfo(Structure):
     ]
 
 
+def _windll_kernel32() -> Any:
+    """
+    Access ``ctypes.windll.kernel32`` in a way that only touches the
+    Windows-only ``windll`` attribute inside a platform-narrowed branch.
+    ``ctypes.windll`` does not exist on POSIX, so guard with the platform
+    check that mypy understands.
+    """
+    if sys.platform == "win32":
+        return ctypes.windll.kernel32
+    raise RuntimeError("windll is only available on Windows")
+
+
 class Win32ColorPrinter(ColorPrinter):
     """
     Prints in color on windows
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         ColorPrinter.__init__(self)
-        self._stdout_handle = ctypes.windll.kernel32.GetStdHandle(-11)
-        self._stderr_handle = ctypes.windll.kernel32.GetStdHandle(-12)
-        self._default_attr = self._get_text_attr(self._stdout_handle)
+        kernel32 = _windll_kernel32()
+        self._stdout_handle: int = kernel32.GetStdHandle(-11)
+        self._stderr_handle: int = kernel32.GetStdHandle(-12)
+        self._default_attr: int = self._get_text_attr(self._stdout_handle)
 
-        self._color_to_code = {
+        self._color_to_code: dict[str, int] = {
             self.RED: 4,
             self.GREEN: 2,
             self.BLUE: 1,
             self.INTENSITY: 8,
         }
 
-    def write(self, text, output_file=None, fg=None, bg=None):
+    def write(
+        self,
+        text: str,
+        output_file: IO[str] | None = None,
+        fg: str | None = None,
+        bg: str | None = None,
+    ) -> None:
         """
         Print the text in color to the output_file
         uses stdout if output_file is None
@@ -167,6 +207,7 @@ class Win32ColorPrinter(ColorPrinter):
         if output_file is None:
             output_file = sys.stdout
 
+        handle: int | None
         if output_file is sys.stdout:
             handle = self._stdout_handle
         elif output_file is sys.stderr:
@@ -189,25 +230,25 @@ class Win32ColorPrinter(ColorPrinter):
 
         if handle is not None:
             output_file.flush()
-            ctypes.windll.kernel32.SetConsoleTextAttribute(handle, self._default_attr)
+            _windll_kernel32().SetConsoleTextAttribute(handle, self._default_attr)
 
     @staticmethod
-    def _get_text_attr(handle):
+    def _get_text_attr(handle: int) -> int:
         """
         Get current text attribute using win-api
         """
         csbi = ConsoleScreenBufferInfo()
-        ctypes.windll.kernel32.GetConsoleScreenBufferInfo(handle, byref(csbi))
-        return csbi.wAttributes
+        _windll_kernel32().GetConsoleScreenBufferInfo(handle, byref(csbi))
+        return int(csbi.wAttributes)
 
     @staticmethod
-    def _set_text_attr(handle, attr):
+    def _set_text_attr(handle: int, attr: int) -> None:
         """
         Set current text attribute using win-api
         """
-        ctypes.windll.kernel32.SetConsoleTextAttribute(handle, attr)
+        _windll_kernel32().SetConsoleTextAttribute(handle, attr)
 
-    def _decode_color(self, color_str):
+    def _decode_color(self, color_str: str) -> int:
         """
         Decode color string into numerical color code
         """

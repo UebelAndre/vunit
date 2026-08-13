@@ -7,6 +7,8 @@
 """
 Module containing the CodecVHDLEnumerationType class.
 """
+from __future__ import annotations
+
 from string import Template
 from vunit.vhdl_parser import VHDLEnumerationType
 from vunit.com.codec_datatype_template import DatatypeCodecTemplate
@@ -15,7 +17,7 @@ from vunit.com.codec_datatype_template import DatatypeCodecTemplate
 class CodecVHDLEnumerationType(VHDLEnumerationType):
     """Class derived from VHDLEnumerationType to provide codec generator functionality for the enumerated type."""
 
-    def generate_codecs_and_support_functions(self, offset=0):
+    def generate_codecs_and_support_functions(self, offset: int = 0) -> tuple[str, str]:
         """Generate codecs and communication support functions for the enumerated type."""
 
         template = EnumerationCodecTemplate()
@@ -37,7 +39,7 @@ class CodecVHDLEnumerationType(VHDLEnumerationType):
 class EnumerationCodecTemplate(DatatypeCodecTemplate):
     """This class contains enumeration codec templates."""
 
-    enumeration_to_string_definitions = Template(
+    enumeration_to_string_definitions: Template = Template(
         """\
   function to_string (
     constant data : $type)
@@ -49,7 +51,7 @@ class EnumerationCodecTemplate(DatatypeCodecTemplate):
 """
     )
 
-    enumeration_codec_definitions = Template(
+    enumeration_codec_definitions: Template = Template(
         """\
   function encode (
     constant data : $type)

@@ -8,15 +8,19 @@
 Interface towards Mentor Graphics/Siemens ModelSim/Questa simulator.
 """
 
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
 import os
 import logging
 from threading import Lock, Event
 from time import sleep
 from configparser import RawConfigParser, ParsingError
+from typing import Any, Mapping
 from ..exceptions import CompileError
 from ..ostools import write_file, Process, file_exists
-from ..vhdl_standard import VHDL
+from ..vhdl_standard import VHDL, VHDLStandard
 from . import SimulatorInterface, ListOfStringOption, StringOption, BooleanOption, check_output
 from .vsim_simulator_mixin import VsimSimulatorMixin, fix_path
 
@@ -52,7 +56,7 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
     ]
 
     @staticmethod
-    def add_arguments(parser):
+    def add_arguments(parser: argparse.ArgumentParser) -> None:
         """
         Add command line arguments
         """
@@ -65,19 +69,22 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
         )
 
     @classmethod
-    def from_args(cls, args, output_path, **kwargs):
+    def from_args(
+        cls,
+        args: argparse.Namespace,
+        output_path: str,
+        **kwargs: Any,
+    ) -> "ModelSimInterface":
         """
         Create new instance from command line arguments object
         """
         persistent = not (args.unique_sim or args.gui)
 
         prefix = cls.find_prefix()
-        try:
-            Path(prefix)
-        except TypeError as exc:
+        if prefix is None:
             raise FileNotFoundError(
                 "Modelsim/Questa executable not found. Please set the VUNIT_MODELSIM_PATH environment variable."
-            ) from exc
+            )
 
         return cls(
             prefix=prefix,
@@ -108,7 +115,7 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
 
         return None
 
-    def _find_ini_file(self, prefix: str, support_ini_flag: bool) -> tuple[Path, str] | None:
+    def _find_ini_file(self, prefix: str, support_ini_flag: bool) -> tuple[Path, str]:
         """
         Find the INI file to use for the simulation and the name of the copy to be used for simulation.
         """
@@ -142,32 +149,32 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
         )
 
     @classmethod
-    def find_prefix_from_path(cls):
+    def find_prefix_from_path(cls) -> str | None:
         """
         Find first valid Modelsim/Questa toolchain prefix
         """
 
-        def has_ini(path):
+        def has_ini(path: str) -> bool:
             return cls._find_any_ini_file(Path(path).parent) is not None
 
         return cls.find_toolchain(["vsim"], constraints=[has_ini])
 
     @classmethod
-    def supports_vhdl_call_paths(cls):
+    def supports_vhdl_call_paths(cls) -> bool:
         """
         Returns True when this simulator supports VHDL-2019 call paths
         """
         return True
 
     @classmethod
-    def supports_vhdl_package_generics(cls):
+    def supports_vhdl_package_generics(cls) -> bool:
         """
         Returns True when this simulator supports VHDL package generics
         """
         return True
 
     @staticmethod
-    def supports_coverage():
+    def supports_coverage() -> bool:
         """
         Returns True when the simulator supports coverage
         """
@@ -183,7 +190,15 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
         except Process.NonZeroExitCode:
             return False
 
-    def __init__(self, prefix, output_path, *, persistent=False, gui=False, debugger="original"):
+    def __init__(
+        self,
+        prefix: str,
+        output_path: str,
+        *,
+        persistent: bool = False,
+        gui: bool = False,
+        debugger: str = "original",
+    ) -> None:
         self._supports_vhdl_2019 = self._find_in_help(prefix, "vcom", "-2019")
         support_ini_flag = self._find_in_help(prefix, "vcom", "-ini")
         self._ini_flag = "-ini" if support_ini_flag else "-modelsimini"
@@ -197,22 +212,23 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
             sim_cfg_file_name=str(Path(output_path) / simulation_ini_file_name),
         )
 
-        self._libraries = []
-        self._coverage_files = set()
-        assert not (persistent and gui)
+        self._libraries: list[Any] = []
+        self._coverage_files: set[str] = set()
+        if persistent and gui:
+            raise RuntimeError("persistent and gui modes cannot be enabled at the same time")
         self._create_ini()
         self._debugger = debugger
         self._vopt_retries = 3
         # Contains design already optimized, i.e. the optimized design can be reused
-        self._optimized_designs = {}
+        self._optimized_designs: dict[str, dict[str, Any]] = {}
         # Contains locks for each library. If locked, a design belonging to the library
         # is being optimized and no other design in that library can be optimized at the
         # same time (from another thread)
-        self._library_locks = {}
+        self._library_locks: dict[str, Lock] = {}
         # Lock to access the two shared variables above
         self._shared_state_lock = Lock()
 
-    def _create_ini(self):
+    def _create_ini(self) -> None:
         """
         Create the INI file
         """
@@ -224,7 +240,7 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
             with Path(self._sim_cfg_file_name).open("wb") as fwrite:
                 fwrite.write(fread.read())
 
-    def add_simulator_specific(self, project):
+    def add_simulator_specific(self, project: Any) -> None:
         """
         Add libraries from INI file and add coverage flags
         """
@@ -233,7 +249,7 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
             if not project.has_library(library_name):
                 project.add_builtin_library(library_name)
 
-    def setup_library_mapping(self, project):
+    def setup_library_mapping(self, project: Any) -> None:
         """
         Setup library mapping
         """
@@ -243,7 +259,7 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
             self._libraries.append(library)
             self.create_library(library.name, library.directory, mapped_libraries)
 
-    def compile_source_file_command(self, source_file):
+    def compile_source_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a single source file
         """
@@ -256,7 +272,7 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
         LOGGER.error("Unknown file type: %s", source_file.file_type)
         raise CompileError
 
-    def _std_str(self, vhdl_standard):
+    def _std_str(self, vhdl_standard: VHDLStandard) -> str:
         """
         Convert standard to format of Modelsim/Questa command line flag
         """
@@ -266,27 +282,26 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
 
         raise ValueError(f"Invalid VHDL standard {vhdl_standard!s}")
 
-    def compile_vhdl_file_command(self, source_file):
+    def compile_vhdl_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a vhdl file
         """
-        return (
-            [
-                str(Path(self._prefix) / "vcom"),
-                "-quiet",
-                self._ini_flag,
-                self._sim_cfg_file_name,
-            ]
-            + source_file.compile_options.get("modelsim.vcom_flags", [])
-            + [
-                self._std_str(source_file.get_vhdl_standard()),
-                "-work",
-                source_file.library.name,
-                source_file.name,
-            ]
-        )
+        cmd: list[str] = [
+            str(Path(self._prefix) / "vcom"),
+            "-quiet",
+            self._ini_flag,
+            self._sim_cfg_file_name,
+        ]
+        cmd += source_file.compile_options.get("modelsim.vcom_flags", [])
+        cmd += [
+            self._std_str(source_file.get_vhdl_standard()),
+            "-work",
+            source_file.library.name,
+            source_file.name,
+        ]
+        return cmd
 
-    def compile_verilog_file_command(self, source_file):
+    def compile_verilog_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a verilog file
         """
@@ -309,7 +324,12 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
             args += [f"+define+{key!s}={value!s}"]
         return args
 
-    def create_library(self, library_name, path, mapped_libraries=None):
+    def create_library(
+        self,
+        library_name: str,
+        path: str,
+        mapped_libraries: dict[str, str] | None = None,
+    ) -> None:
         """
         Create and map a library_name to path
         """
@@ -331,7 +351,7 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
         cfg.set("Library", library_name, path)
         write_ini(cfg, self._sim_cfg_file_name)
 
-    def _get_mapped_libraries(self):
+    def _get_mapped_libraries(self) -> dict[str, str]:
         """
         Get mapped libraries from INI file
         """
@@ -341,14 +361,14 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
             del libraries["others"]
         return libraries
 
-    def _optimize_design(self, config):
+    def _optimize_design(self, config: Any) -> bool:
         """
         Return True if design shall be optimized.
         """
 
-        return config.sim_options.get("modelsim.three_step_flow", False)
+        return bool(config.sim_options.get("modelsim.three_step_flow", False))
 
-    def _early_load_in_gui_mode(self):  # pylint: disable=unused-argument
+    def _early_load_in_gui_mode(self) -> bool:  # pylint: disable=unused-argument
         """
         Return True if design is to be loaded on the first vsim call rather than
         in the second vsim call embedded in the script file.
@@ -358,7 +378,7 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
         return self._debugger == "visualizer"
 
     @staticmethod
-    def _design_to_optimize(config):
+    def _design_to_optimize(config: Any) -> str:
         """
         Return the design to optimize.
         """
@@ -367,14 +387,12 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
         else:
             architecture_suffix = f"({config.architecture_name!s})"
 
-        return (
-            config.library_name + "." + config.entity_name + architecture_suffix
-            if config.vhdl_configuration_name is None
-            else config.library_name + "." + config.vhdl_configuration_name
-        )
+        if config.vhdl_configuration_name is None:
+            return f"{config.library_name!s}.{config.entity_name!s}{architecture_suffix}"
+        return f"{config.library_name!s}.{config.vhdl_configuration_name!s}"
 
     @staticmethod
-    def _to_optimized_design(design_to_optimize):
+    def _to_optimized_design(design_to_optimize: str) -> str:
         """
         Return name for optimized design.
 
@@ -384,7 +402,7 @@ class ModelSimInterface(VsimSimulatorMixin, SimulatorInterface):  # pylint: disa
 
         return "opt_" + "".join(ch for ch in design_to_optimize if ch.isalnum())
 
-    def _create_optimize_function(self, config):
+    def _create_optimize_function(self, config: Any) -> str:
         """
         Create vopt script.
         """
@@ -445,10 +463,13 @@ proc vunit_optimize {{vopt_extra_args ""}} {"""
 
         return tcl
 
-    def _run_persistent_optimize(self, optimize_file_name):
+    def _run_persistent_optimize(self, optimize_file_name: Path) -> bool:
         """
         Run a test bench using the persistent vsim process
         """
+        if self._persistent_shell is None:
+            raise RuntimeError("Persistent TCL shell is not available for optimize")
+
         try:
             self._persistent_shell.execute(f'source "{fix_path(str(optimize_file_name))!s}"')
             self._persistent_shell.execute("set failed [vunit_optimize]")
@@ -462,7 +483,7 @@ proc vunit_optimize {{vopt_extra_args ""}} {"""
 
         return status
 
-    def _run_optimize_batch_file(self, batch_file_name, script_path):
+    def _run_optimize_batch_file(self, batch_file_name: Path, script_path: Path) -> bool:
         """
         Run a test bench in batch by invoking a new vsim process from the command line
         """
@@ -485,7 +506,7 @@ proc vunit_optimize {{vopt_extra_args ""}} {"""
         return status
 
     @staticmethod
-    def _wait_for_file_lock(library):
+    def _wait_for_file_lock(library: Any) -> None:
         """
         Wait for any _lock file to be removed.
         """
@@ -496,7 +517,7 @@ proc vunit_optimize {{vopt_extra_args ""}} {"""
                 log_waiting = False
             sleep(0.05)
 
-    def _acquire_library_lock(self, library, config, design_to_optimize):
+    def _acquire_library_lock(self, library: Any, config: Any, design_to_optimize: str) -> None:
         """
         Acquire library lock and wait for any lock file to be removed.
         """
@@ -512,7 +533,7 @@ proc vunit_optimize {{vopt_extra_args ""}} {"""
         self._wait_for_file_lock(library)
         LOGGER.debug("Acquired library lock for %s to optimize %s.", config.library_name, design_to_optimize)
 
-    def _release_library_lock(self, library, config):
+    def _release_library_lock(self, library: Any, config: Any) -> None:
         """
         Release library lock and wait for any lock file to be removed.
         """
@@ -521,7 +542,13 @@ proc vunit_optimize {{vopt_extra_args ""}} {"""
             self._library_locks[config.library_name].release()
 
     @staticmethod
-    def _execute_with_retries(retries, error_msg, func, *args, **kwargs):
+    def _execute_with_retries(
+        retries: int,
+        error_msg: str,
+        func: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> bool:
         """
         Execute provided function and allow for retries if it fails.
         """
@@ -531,9 +558,9 @@ proc vunit_optimize {{vopt_extra_args ""}} {"""
             status = func(*args, **kwargs)
             retries -= 1
 
-        return status
+        return bool(status)
 
-    def _optimize(self, config, script_path):
+    def _optimize(self, config: Any, script_path: Any) -> bool:
         """
         Optimize design and return simulation target or False if optimization failed.
         """
@@ -631,7 +658,7 @@ quit -code 0
 
         return True
 
-    def _load_setup(self, config, output_path, optimize_design):
+    def _load_setup(self, config: Any, output_path: str, optimize_design: bool) -> str:
         """
         Return setup part of load function that loads the design.
         """
@@ -652,7 +679,7 @@ quit -code 0
 
         return tcl
 
-    def _load_init(self, test_suite_name, config, output_path):
+    def _load_init(self, test_suite_name: str, config: Any, output_path: str) -> str:
         """
         Return initialiation part ofter loading design.
         """
@@ -690,7 +717,13 @@ quit -code 0
 
         return tcl
 
-    def _create_load_function(self, test_suite_name, config, output_path, optimize_design):
+    def _create_load_function(
+        self,
+        test_suite_name: str,
+        config: Any,
+        output_path: Any,
+        optimize_design: bool,
+    ) -> str:
         """
         Create the vunit_load TCL function that runs the vsim command and loads the design
         """
@@ -710,7 +743,7 @@ proc vunit_load {{vsim_extra_args ""}} {"""
 
         return tcl
 
-    def _common_vsim_flags(self, config, optimize_design):
+    def _common_vsim_flags(self, config: Any, optimize_design: bool) -> list[str]:
         """Return vsim flags to normal and early load mode."""
         if optimize_design:
             simulation_target = self._to_optimized_design(self._design_to_optimize(config))
@@ -747,7 +780,7 @@ proc vunit_load {{vsim_extra_args ""}} {"""
 
         return vsim_flags
 
-    def _get_vsim_flags(self, config, output_path, optimize_design):
+    def _get_vsim_flags(self, config: Any, output_path: str, optimize_design: bool) -> list[str]:
         """Return vsim flags for load function."""
         vsim_flags = self._common_vsim_flags(config, optimize_design)
 
@@ -769,7 +802,7 @@ proc vunit_load {{vsim_extra_args ""}} {"""
 
         return vsim_flags
 
-    def _get_gui_option(self):
+    def _get_gui_option(self) -> str:
         """
         Return the option used to start in GUI mode.
 
@@ -777,7 +810,7 @@ proc vunit_load {{vsim_extra_args ""}} {"""
         """
         return "-visualizer" if self._debugger == "visualizer" else "-gui"
 
-    def _get_load_flags(self, config, output_path, optimize_design):
+    def _get_load_flags(self, config: Any, output_path: str, optimize_design: bool) -> list[str]:
         """
         Return extra flags needed for the first vsim call in GUI mode when early load is enabled.
 
@@ -811,7 +844,7 @@ proc vunit_load {{vsim_extra_args ""}} {"""
         return vsim_flags
 
     @staticmethod
-    def _create_run_function():
+    def _create_run_function() -> str:
         """
         Create the vunit_run function to run the test bench
         """
@@ -846,11 +879,11 @@ proc _vunit_sim_restart {} {
 }
 """
 
-    def _vopt_extra_args(self, config):
+    def _vopt_extra_args(self, config: Any) -> str:
         """
         Determine vopt_extra_args
         """
-        vopt_extra_args = []
+        vopt_extra_args: list[str] = []
         vopt_extra_args = config.sim_options.get("modelsim.vopt_flags", vopt_extra_args)
 
         if self._gui:
@@ -858,11 +891,11 @@ proc _vunit_sim_restart {} {
 
         return " ".join(vopt_extra_args)
 
-    def _vsim_extra_args(self, config):
+    def _vsim_extra_args(self, config: Any) -> str:
         """
         Determine vsim_extra_args
         """
-        vsim_extra_args = []
+        vsim_extra_args: list[str] = []
         vsim_extra_args = config.sim_options.get("modelsim.vsim_flags", vsim_extra_args)
 
         if self._gui:
@@ -870,7 +903,7 @@ proc _vunit_sim_restart {} {
 
         return " ".join(vsim_extra_args)
 
-    def merge_coverage(self, file_name, args=None):
+    def merge_coverage(self, file_name: str, args: list[str] | None = None) -> None:
         """
         Merge coverage from all test cases
         """
@@ -896,7 +929,7 @@ proc _vunit_sim_restart {} {
         print("Done merging coverage files")
 
     @staticmethod
-    def get_env():
+    def get_env() -> Mapping[str, str] | None:
         """
         Remove MODELSIM and QSIM_INIenvironment variables
         """
@@ -908,7 +941,7 @@ proc _vunit_sim_restart {} {
         return env
 
 
-def encode_generic_value_for_tcl(value):
+def encode_generic_value_for_tcl(value: Any) -> str:
     """
     Ensure values with space and commas in them are quoted properly for TCL files.
     """
@@ -920,7 +953,7 @@ def encode_generic_value_for_tcl(value):
     return s_value
 
 
-def encode_generic_value_for_args(value):
+def encode_generic_value_for_args(value: Any) -> str:
     """
     Ensure values with space and commas in them are quoted properly for argument files.
     """
@@ -932,7 +965,7 @@ def encode_generic_value_for_args(value):
     return s_value
 
 
-def parse_ini(file_name):
+def parse_ini(file_name: str) -> RawConfigParser:
     """
     Parse an INI file
     :returns: A RawConfigParser object
@@ -943,7 +976,7 @@ def parse_ini(file_name):
     return cfg
 
 
-def write_ini(cfg, file_name):
+def write_ini(cfg: RawConfigParser, file_name: str) -> None:
     """
     Writes an INI file
     """

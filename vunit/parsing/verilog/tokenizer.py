@@ -12,7 +12,9 @@
 Verilog preprocessing
 """
 
-from vunit.parsing.tokenizer import Tokenizer, Token
+from __future__ import annotations
+
+from vunit.parsing.tokenizer import Location, Tokenizer, TokenFunc, TokenKind, Token, TokenType
 from vunit.parsing.verilog.tokens import (
     COLON,
     COMMA,
@@ -44,30 +46,31 @@ class VerilogTokenizer(object):
     A Verilog tokenizer
     """
 
-    def __init__(self, create_locations=True):
+    def __init__(self, create_locations: bool = True) -> None:
         self._tokenizer = Tokenizer()
         self._create_locations = create_locations
 
-        def slice_value(token, start=None, end=None):
+        def slice_value(token: TokenType, start: int | None = None, end: int | None = None) -> TokenType:
             return Token(token.kind, token.value[start:end], token.location)
 
-        def str_value(token):
+        def str_value(token: TokenType) -> TokenType:
             return Token(
                 token.kind,
                 token.value[1:-1].replace("\\\n", "").replace('\\"', '"'),
                 token.location,
             )
 
-        def remove_value(token):
+        def remove_value(token: TokenType) -> TokenType:
             return Token(token.kind, "", token.location)
 
-        def ignore_value(token):  # pylint: disable=unused-argument
-            pass
+        def ignore_value(token: TokenType) -> TokenType | None:  # pylint: disable=useless-return
+            del token
+            return None
 
-        def add(kind, regex, func=None):
+        def add(kind: TokenKind, regex: str, func: TokenFunc | None = None) -> None:
             self._tokenizer.add(kind, regex, func)
 
-        def replace_keywords(token):  # pylint: disable=missing-docstring
+        def replace_keywords(token: TokenType) -> TokenType:  # pylint: disable=missing-docstring
             if token.value in KEYWORDS:
                 return Token(KEYWORDS[token.value], token.value, token.location)
 
@@ -125,7 +128,12 @@ class VerilogTokenizer(object):
 
         self._tokenizer.finalize()
 
-    def tokenize(self, code, file_name=None, previous_location=None):
+    def tokenize(
+        self,
+        code: str,
+        file_name: str | None = None,
+        previous_location: Location | None = None,
+    ) -> list[TokenType]:
         """
         Tokenize Verilog code to be preprocessed
         """

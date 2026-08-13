@@ -192,7 +192,7 @@ Compile failed
 
     @mock.patch("os.environ", autospec=True)
     def test_find_prefix(self, environ):
-        class MySimulatorInterface(SimulatorInterface):  # pylint: disable=abstract-method
+        class MySimulatorInterface(SimulatorInterface):
             """
             Dummy simulator interface for testing
             """
@@ -203,6 +203,16 @@ Compile failed
             @classmethod
             def find_prefix_from_path(cls):
                 return cls.prefix_from_path
+
+            @classmethod
+            def from_args(cls, args, output_path, **kwargs):
+                return cls(output_path=output_path, gui=False)
+
+            def compile_source_file_command(self, source_file):
+                raise NotImplementedError
+
+            def simulate(self, output_path, test_suite_name, config, elaborate_only):
+                raise NotImplementedError
 
         simif = MySimulatorInterface(output_path="output_path", gui=False)
         simif.name = "simname"
@@ -292,11 +302,27 @@ class TestOptions(unittest.TestCase):
             assert False
 
 
+class _TestSimulatorInterface(SimulatorInterface):
+    """Concrete SimulatorInterface used only in these tests."""
+
+    name = "test"
+
+    @classmethod
+    def from_args(cls, args, output_path, **kwargs):
+        return cls(output_path=output_path, gui=False)
+
+    def compile_source_file_command(self, source_file):
+        raise NotImplementedError
+
+    def simulate(self, output_path, test_suite_name, config, elaborate_only):
+        raise NotImplementedError
+
+
 def create_simulator_interface():
     """
     Create a simulator interface with fake method
     """
-    simif = SimulatorInterface(output_path="output_path", gui=False)
+    simif = _TestSimulatorInterface(output_path="output_path", gui=False)
     simif.compile_source_file_command = mock.create_autospec(simif.compile_source_file_command)
     return simif
 

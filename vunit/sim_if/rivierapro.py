@@ -8,13 +8,17 @@
 Interface towards Aldec Riviera Pro
 """
 
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
 import os
 import re
 import logging
+from typing import Any
 from ..exceptions import CompileError
 from ..ostools import Process, file_exists
-from ..vhdl_standard import VHDL
+from ..vhdl_standard import VHDL, VHDLStandard
 from . import SimulatorInterface, ListOfStringOption, StringOption
 from .vsim_simulator_mixin import VsimSimulatorMixin, fix_path
 
@@ -44,7 +48,12 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
     ]
 
     @classmethod
-    def from_args(cls, args, output_path, **kwargs):
+    def from_args(
+        cls,
+        args: argparse.Namespace,
+        output_path: str,
+        **kwargs: Any,
+    ) -> "RivieraProInterface":
         """
         Create new instance from command line arguments object
         """
@@ -58,64 +67,75 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
         )
 
     @classmethod
-    def find_prefix_from_path(cls):
+    def find_prefix_from_path(cls) -> str | None:
         """
         Find RivieraPro toolchain.
 
         Must have vsim and vsimsa binaries but no avhdl.exe
         """
 
-        def no_avhdl(path):
+        def no_avhdl(path: str) -> bool:
             return not file_exists(str(Path(path) / "avhdl.exe"))
 
         return cls.find_toolchain(["vsim", "vsimsa"], constraints=[no_avhdl])
 
     @classmethod
-    def _get_version(cls):
+    def _get_version(cls) -> "VersionConsumer":
         """
         Return a VersionConsumer object containing the simulator version.
         """
-        proc = Process([str(Path(cls.find_prefix()) / "vcom"), "-version"], env=cls.get_env())
+        prefix = cls.find_prefix()
+        if prefix is None:
+            raise RuntimeError("Riviera-PRO prefix not found; cannot query vcom for version")
+        proc = Process([str(Path(prefix) / "vcom"), "-version"], env=cls.get_env())
         consumer = VersionConsumer()
         proc.consume_output(consumer)
 
         return consumer
 
     @classmethod
-    def get_osvvm_coverage_api(cls):
+    def get_osvvm_coverage_api(cls) -> str | None:
         """
         Returns simulator name when OSVVM coverage API is supported, None otherwise.
         """
         version = cls._get_version()
-        if version.year is not None:
+        if version.year is not None and version.month is not None:
             if (version.year == 2016 and version.month >= 10) or (version.year > 2016):
                 return cls.name
 
         return None
 
     @classmethod
-    def supports_vhdl_call_paths(cls):
+    def supports_vhdl_call_paths(cls) -> bool:
         """
         Returns True when this simulator supports VHDL-2019 call paths
         """
         return True
 
     @classmethod
-    def supports_vhdl_package_generics(cls):
+    def supports_vhdl_package_generics(cls) -> bool:
         """
         Returns True when this simulator supports VHDL package generics
         """
         return True
 
     @staticmethod
-    def supports_coverage():
+    def supports_coverage() -> bool:
         """
         Returns True when the simulator supports coverage
         """
         return True
 
-    def __init__(self, prefix, output_path, persistent=False, gui=False):
+    def __init__(
+        self,
+        prefix: str | None,
+        output_path: str,
+        persistent: bool = False,
+        gui: bool = False,
+    ) -> None:
         SimulatorInterface.__init__(self, output_path, gui)
+        if prefix is None:
+            raise RuntimeError("Riviera-PRO prefix not found")
         VsimSimulatorMixin.__init__(
             self,
             prefix,
@@ -123,11 +143,11 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
             sim_cfg_file_name=str(Path(output_path) / "library.cfg"),
         )
         self._create_library_cfg()
-        self._libraries = []
-        self._coverage_files = set()
+        self._libraries: list[Any] = []
+        self._coverage_files: set[str] = set()
         self._version = self._get_version()
 
-    def add_simulator_specific(self, project):
+    def add_simulator_specific(self, project: Any) -> None:
         """
         Add builtin (global) libraries
         """
@@ -138,7 +158,7 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
             if not project.has_library(library_name):
                 project.add_builtin_library(library_name)
 
-    def setup_library_mapping(self, project):
+    def setup_library_mapping(self, project: Any) -> None:
         """
         Setup library mapping
         """
@@ -150,7 +170,7 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
             )
             self.create_library(library.name, path, mapped_libraries)
 
-    def compile_source_file_command(self, source_file):
+    def compile_source_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a single source_file
         """
@@ -163,12 +183,12 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
         LOGGER.error("Unknown file type: %s", source_file.file_type)
         raise CompileError
 
-    def _std_str(self, vhdl_standard):
+    def _std_str(self, vhdl_standard: VHDLStandard) -> str:
         """
         Convert standard to format of Riviera-PRO command line flag
         """
         if vhdl_standard == VHDL.STD_2019:
-            if self._version.year is not None:
+            if self._version.year is not None and self._version.month is not None:
                 if (self._version.year == 2020 and self._version.month < 4) or (self._version.year < 2020):
                     return "-2018"
 
@@ -176,28 +196,27 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
 
         return f"-{vhdl_standard!s}"
 
-    def compile_vhdl_file_command(self, source_file):
+    def compile_vhdl_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a VHDL file
         """
 
-        return (
-            [
-                str(Path(self._prefix) / "vcom"),
-                "-quiet",
-                "-j",
-                str(Path(self._sim_cfg_file_name).parent),
-            ]
-            + source_file.compile_options.get("rivierapro.vcom_flags", [])
-            + [
-                self._std_str(source_file.get_vhdl_standard()),
-                "-work",
-                source_file.library.name,
-                source_file.name,
-            ]
-        )
+        cmd: list[str] = [
+            str(Path(self._prefix) / "vcom"),
+            "-quiet",
+            "-j",
+            str(Path(self._sim_cfg_file_name).parent),
+        ]
+        cmd += source_file.compile_options.get("rivierapro.vcom_flags", [])
+        cmd += [
+            self._std_str(source_file.get_vhdl_standard()),
+            "-work",
+            source_file.library.name,
+            source_file.name,
+        ]
+        return cmd
 
-    def compile_verilog_file_command(self, source_file):
+    def compile_verilog_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a Verilog file
         """
@@ -221,7 +240,12 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
                 args[-1] += f"={value!s}"
         return args
 
-    def create_library(self, library_name, path, mapped_libraries=None):
+    def create_library(
+        self,
+        library_name: str,
+        path: str,
+        mapped_libraries: dict[str, str] | None = None,
+    ) -> None:
         """
         Create and map a library_name to path
         """
@@ -250,7 +274,7 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
         )
         proc.consume_output(callback=None)
 
-    def _create_library_cfg(self):
+    def _create_library_cfg(self) -> None:
         """
         Create the library.cfg file if it does not exist
         """
@@ -261,20 +285,20 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
             ofile.write(f'$INCLUDE = "{self._builtin_library_cfg!s}"\n')
 
     @property
-    def _builtin_library_cfg(self):
+    def _builtin_library_cfg(self) -> str:
         return str(Path(self._prefix).parent / "vlib" / "library.cfg")
 
     _library_re = re.compile(r"([a-zA-Z_0-9]+)\s=\s(.*)")
 
-    def _get_mapped_libraries(self, library_cfg_file):
+    def _get_mapped_libraries(self, library_cfg_file: str) -> dict[str, str]:
         """
         Get mapped libraries by running vlist on the working directory
         """
-        lines = []
+        lines: list[str] = []
         proc = Process([str(Path(self._prefix) / "vlist")], cwd=str(Path(library_cfg_file).parent))
         proc.consume_output(callback=lines.append)
 
-        libraries = {}
+        libraries: dict[str, str] = {}
         for line in lines:
             match = self._library_re.match(line)
             if match is None:
@@ -285,11 +309,16 @@ class RivieraProInterface(VsimSimulatorMixin, SimulatorInterface):
         return libraries
 
     def _create_load_function(
-        self, test_suite_name, config, output_path, optimize_design
-    ):  # pylint: disable=unused-argument
+        self,
+        test_suite_name: str,
+        config: Any,
+        output_path: Any,
+        optimize_design: bool,
+    ) -> str:
         """
         Create the vunit_load TCL function that runs the vsim command and loads the design
         """
+        del test_suite_name, optimize_design  # signature aligned with other simulators
         set_generic_str = " ".join(
             (f"-g/{config.entity_name!s}/{name!s}={format_generic(value)!s}" for name, value in config.generics.items())
         )
@@ -358,11 +387,11 @@ proc vunit_load {{}} {{
 
         return tcl
 
-    def _vsim_extra_args(self, config):
+    def _vsim_extra_args(self, config: Any) -> str:
         """
         Determine vsim_extra_args
         """
-        vsim_extra_args = []
+        vsim_extra_args: list[str] = []
         vsim_extra_args = config.sim_options.get("rivierapro.vsim_flags", vsim_extra_args)
 
         if self._gui:
@@ -370,8 +399,16 @@ proc vunit_load {{}} {{
 
         return " ".join(vsim_extra_args)
 
+    def _create_optimize_function(self, config: Any) -> str:  # pylint: disable=unused-argument
+        """
+        Riviera-PRO does not use vopt-style design optimization. This method exists
+        only to satisfy the ``_VsimMixinHost`` protocol; it should never be called
+        because ``_optimize_design`` returns ``False`` for this interface.
+        """
+        raise RuntimeError("Riviera-PRO does not support design optimization")
+
     @staticmethod
-    def _create_run_function():
+    def _create_run_function() -> str:
         """
         Create the vunit_run function to run the test bench
         """
@@ -402,7 +439,7 @@ proc _vunit_sim_restart {} {
 }
 """
 
-    def merge_coverage(self, file_name, args=None):
+    def merge_coverage(self, file_name: str, args: list[str] | None = None) -> None:
         """
         Merge coverage from all test cases,
         """
@@ -444,7 +481,7 @@ proc _vunit_sim_restart {} {
         print("Done merging coverage files")
 
 
-def format_generic(value):
+def format_generic(value: Any) -> str:
     """
     Generic values with space in them need to be quoted
     """
@@ -457,13 +494,13 @@ class VersionConsumer(object):
     Consume version information
     """
 
-    def __init__(self):
-        self.year = None
-        self.month = None
+    def __init__(self) -> None:
+        self.year: int | None = None
+        self.month: int | None = None
 
     _version_re = re.compile(r"(?P<year>\d+)\.(?P<month>\d+)\.\d+")
 
-    def __call__(self, line):
+    def __call__(self, line: str) -> bool:
         match = self._version_re.search(line)
         if match is not None:
             self.year = int(match.group("year"))

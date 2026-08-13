@@ -8,15 +8,23 @@
 Provides csv log functionality
 """
 
+from __future__ import annotations
+
 from csv import Sniffer, DictReader, DictWriter
 from glob import glob
 from pathlib import Path
+from typing import Iterator
 
 
 class CsvLogs(object):
     # pylint: disable=missing-docstring
 
-    def __init__(self, pattern="", field_names=None, encoding="iso-8859-1"):
+    def __init__(
+        self,
+        pattern: str = "",
+        field_names: list[str] | None = None,
+        encoding: str = "iso-8859-1",
+    ) -> None:
         default_field_names = [
             "#",
             "Time",
@@ -26,15 +34,15 @@ class CsvLogs(object):
             "Source",
             "Message",
         ]
-        self._field_names = default_field_names if field_names is None else field_names
-        self._entries = []
+        self._field_names: list[str] = default_field_names if field_names is None else field_names
+        self._entries: list[dict[str, str]] = []
         self._encoding = encoding
         self.add(pattern)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[dict[str, str]]:
         return iter(self._entries)
 
-    def add(self, pattern):
+    def add(self, pattern: str) -> None:
         # pylint: disable=missing-docstring
         for csv_file in [Path(p).resolve() for p in glob(pattern)]:
             with csv_file.open("r", encoding=self._encoding) as fread:
@@ -46,7 +54,7 @@ class CsvLogs(object):
 
         self._entries.sort(key=lambda dictionary: int(dictionary["#"]))
 
-    def write(self, output_file):
+    def write(self, output_file: str | Path) -> None:
         # pylint: disable=missing-docstring
         with Path(output_file).open("w", encoding=self._encoding) as fwrite:
             csv_writer = DictWriter(fwrite, delimiter=",", fieldnames=self._field_names, lineterminator="\n")

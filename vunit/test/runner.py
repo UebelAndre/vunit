@@ -8,6 +8,8 @@
 Provided functionality to run a suite of test in a robust way
 """
 
+from __future__ import annotations
+
 import os
 from multiprocessing import cpu_count
 from pathlib import Path
@@ -19,9 +21,13 @@ import logging
 import string
 from datetime import datetime
 from contextlib import contextmanager
+from typing import IO, Any, Iterable, Iterator
 from .. import ostools
 from ..hashing import hash_string
-from .report import PASSED, FAILED, SKIPPED
+from .list import TestSuiteLike
+from .report import PASSED, FAILED, SKIPPED, TestStatus
+
+from .report import TestReport
 
 LOGGER = logging.getLogger(__name__)
 
@@ -37,28 +43,29 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
-        report,
-        output_path,
+        report: TestReport,
+        output_path: str,
         *,
-        verbosity=VERBOSITY_NORMAL,
-        num_threads=1,
-        fail_fast=False,
-        dont_catch_exceptions=False,
-        no_color=False,
-        latest_dependency_updates=None,
-        test_history=None,
-    ):
+        verbosity: int = VERBOSITY_NORMAL,
+        num_threads: int = 1,
+        fail_fast: bool = False,
+        dont_catch_exceptions: bool = False,
+        no_color: bool = False,
+        latest_dependency_updates: dict[str, float | None] | None = None,
+        test_history: dict[str, dict[str, dict[str, Any]]] | None = None,
+    ) -> None:
         self._lock = threading.Lock()
         self._fail_fast = fail_fast
         self._abort = False
         self._local = threading.local()
         self._report = report
         self._output_path = output_path
-        assert verbosity in (
+        if verbosity not in (
             self.VERBOSITY_QUIET,
             self.VERBOSITY_NORMAL,
             self.VERBOSITY_VERBOSE,
-        )
+        ):
+            raise ValueError(f"Invalid verbosity {verbosity!r}")
         self._verbosity = verbosity
         self._num_threads = num_threads or cpu_count()
         self._stdout = sys.stdout
@@ -66,30 +73,36 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
         self._stderr = sys.stderr
         self._dont_catch_exceptions = dont_catch_exceptions
         self._no_color = no_color
-        self._latest_dependency_updates = {} if latest_dependency_updates is None else latest_dependency_updates
-        self._test_history = {} if test_history is None else test_history
+        self._latest_dependency_updates: dict[str, float | None] = (
+            {} if latest_dependency_updates is None else latest_dependency_updates
+        )
+        self._test_history: dict[str, dict[str, dict[str, Any]]] = (
+            {} if test_history is None else test_history
+        )
 
         ostools.PROGRAM_STATUS.reset()
 
     @property
-    def _is_verbose(self):
+    def _is_verbose(self) -> bool:
         return self._verbosity == self.VERBOSITY_VERBOSE
 
     @property
-    def _is_quiet(self):
+    def _is_quiet(self) -> bool:
         return self._verbosity == self.VERBOSITY_QUIET
 
-    def run(self, test_suites):
+    def run(self, test_suites: Iterable[TestSuiteLike]) -> None:
         """
         Run a list of test suites
         """
         if not Path(self._output_path).exists():
             os.makedirs(self._output_path)
 
-        self._create_test_mapping_file(test_suites)
+        test_suite_list = list(test_suites)
+
+        self._create_test_mapping_file(test_suite_list)
 
         num_tests = 0
-        for test_suite in test_suites:
+        for test_suite in test_suite_list:
             for test_name in test_suite.test_names:
                 num_tests += 1
                 if self._is_verbose:
@@ -101,9 +114,11 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
 
         self._report.set_expected_num_tests(num_tests)
 
-        scheduler = TestScheduler(test_suites, self._num_threads, self._latest_dependency_updates, self._test_history)
+        scheduler = TestScheduler(
+            test_suite_list, self._num_threads, self._latest_dependency_updates, self._test_history
+        )
 
-        threads = []
+        threads: list[threading.Thread] = []
 
         # Disable continuous output in parallel mode
         write_stdout = self._is_verbose and self._num_threads == 1
@@ -140,14 +155,22 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
             sys.stderr = self._stderr
             LOGGER.debug("TestRunner: Leaving")
 
-    def _run_thread(self, write_stdout, scheduler, num_tests, *, is_main, thread_id):
+    def _run_thread(
+        self,
+        write_stdout: bool,
+        scheduler: TestScheduler,
+        num_tests: int,
+        *,
+        is_main: bool,
+        thread_id: int,
+    ) -> None:
         """
         Run worker thread
         """
         self._local.output = self._stdout
 
         while True:
-            test_suite = None
+            test_suite: TestSuiteLike | None = None
             try:
                 test_suite = scheduler.next(thread_id)
 
@@ -177,7 +200,7 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
                 if test_suite is not None:
                     scheduler.test_done(thread_id)
 
-    def _get_output_path(self, test_suite_name):
+    def _get_output_path(self, test_suite_name: str) -> str:
         """
         Construct the full output path of a test case.
         Ensure no bad characters and no long path names.
@@ -199,8 +222,13 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
         return str(Path(output_path) / full_name)
 
     def _add_skipped_tests(
-        self, test_suite, results, start_time, num_tests, output_file_name
-    ):  # pylint: disable=too-many-positional-arguments
+        self,
+        test_suite: TestSuiteLike,
+        results: dict[str, TestStatus],
+        start_time: float,
+        num_tests: int,
+        output_file_name: str,
+    ) -> None:  # pylint: disable=too-many-positional-arguments
         """
         Add skipped tests
         """
@@ -209,15 +237,20 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
         self._add_results(test_suite, results, start_time, num_tests, output_file_name)
 
     def _run_test_suite(  # pylint: disable=too-many-locals
-        self, test_suite, write_stdout, num_tests, output_path, output_file_name
-    ):  # pylint: disable=too-many-positional-arguments
+        self,
+        test_suite: TestSuiteLike,
+        write_stdout: bool,
+        num_tests: int,
+        output_path: str,
+        output_file_name: str,
+    ) -> None:  # pylint: disable=too-many-positional-arguments
         """
         Run the actual test suite
         """
         color_output_file_name = str(Path(output_path) / "output_with_color.txt")
 
-        output_file = None
-        color_output_file = None
+        output_file: IO[str] | None = None
+        color_output_file: IO[str] | None = None
 
         start_time = ostools.get_time()
         results = self._fail_suite(test_suite)
@@ -231,6 +264,7 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
             output_file.seek(0)
             output_file.truncate()
 
+            output_from: IO[str]
             if write_stdout:
                 output_from = self._stdout_ansi
             else:
@@ -240,15 +274,17 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
                 output_from = color_output_file
             self._local.output = Tee([output_from, output_file])
 
-            def read_output():
+            active_output_file = output_file
+
+            def read_output() -> str:
                 """
                 Called to read the contents of the output file on demand
                 """
-                output_file.flush()
-                prev = output_file.tell()
-                output_file.seek(0)
-                contents = output_file.read()
-                output_file.seek(prev)
+                active_output_file.flush()
+                prev = active_output_file.tell()
+                active_output_file.seek(0)
+                contents = active_output_file.read()
+                active_output_file.seek(prev)
                 return contents
 
             results = test_suite.run(output_path=output_path, read_output=read_output)
@@ -280,13 +316,13 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
                 self._abort = True
 
     @staticmethod
-    def _prepare_test_suite_output_path(output_path):
+    def _prepare_test_suite_output_path(output_path: str) -> None:
         """
         Make sure the directory exists and is empty before running test.
         """
         ostools.renew_path(output_path)
 
-    def _create_test_mapping_file(self, test_suites):
+    def _create_test_mapping_file(self, test_suites: Iterable[TestSuiteLike]) -> None:
         """
         Create a file mapping test name to test output folder.
         This is to allow the user to find the test output folder when it is hashed
@@ -306,13 +342,13 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
             mapping.add(f"{Path(test_output).name!s} {test_suite.name!s}")
 
         # Sort by everything except hash
-        mapping = sorted(mapping, key=lambda value: value[value.index(" ") :])
+        sorted_mapping = sorted(mapping, key=lambda value: value[value.index(" ") :])
 
         with mapping_file_name.open("w", encoding="utf-8") as fptr:
-            for value in mapping:
+            for value in sorted_mapping:
                 fptr.write(value + "\n")
 
-    def _print_output(self, output_file_name):
+    def _print_output(self, output_file_name: str) -> None:
         """
         Print contents of output file if it exists
         """
@@ -321,8 +357,13 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
                 self._stdout_ansi.write(line)
 
     def _add_results(
-        self, test_suite, results, start_time, num_tests, output_file_name
-    ):  # pylint: disable=too-many-positional-arguments
+        self,
+        test_suite: TestSuiteLike,
+        results: dict[str, TestStatus],
+        start_time: float,
+        num_tests: int,
+        output_file_name: str,
+    ) -> None:  # pylint: disable=too-many-positional-arguments
         """
         Add results to test report
         """
@@ -345,15 +386,15 @@ class TestRunner(object):  # pylint: disable=too-many-instance-attributes
         print()
 
     @staticmethod
-    def _fail_suite(test_suite):
+    def _fail_suite(test_suite: TestSuiteLike) -> dict[str, TestStatus]:
         """Return failure for all tests in suite"""
-        results = {}
+        results: dict[str, TestStatus] = {}
         for test_name in test_suite.test_names:
             results[test_name] = FAILED
         return results
 
     @contextmanager
-    def _stdout_lock(self):
+    def _stdout_lock(self) -> Iterator[None]:
         """
         Enter this lock when printing to stdout
         Ensures no additional output is printed during abort
@@ -370,14 +411,14 @@ class Tee(object):
     like the unix 'tee' command.
     """
 
-    def __init__(self, files):
+    def __init__(self, files: list[IO[str]]) -> None:
         self._files = files
 
-    def write(self, txt):
+    def write(self, txt: str) -> None:
         for ofile in self._files:
             ofile.write(txt)
 
-    def flush(self):
+    def flush(self) -> None:
         for ofile in self._files:
             ofile.flush()
 
@@ -388,11 +429,11 @@ class ThreadLocalOutput(object):
     output to a thread local file interface
     """
 
-    def __init__(self, local, stdout):
+    def __init__(self, local: threading.local, stdout: IO[str]) -> None:
         self._local = local
         self._stdout = stdout
 
-    def write(self, txt):
+    def write(self, txt: str) -> None:
         """
         Write to file object
         """
@@ -401,7 +442,7 @@ class ThreadLocalOutput(object):
         else:
             self._stdout.write(txt)
 
-    def flush(self):
+    def flush(self) -> None:
         """
         Flush file object
         """
@@ -416,7 +457,9 @@ class TestScheduler(object):  # pylint: disable=too-many-instance-attributes
     Schedule tests to different treads
     """
 
-    def _create_test_suite_sets(self, test_suites):
+    def _create_test_suite_sets(
+        self, test_suites: Iterable[TestSuiteLike]
+    ) -> list[dict[str, Any]]:
         """
         Create static priority based on test result and file change history.
         """
@@ -437,7 +480,9 @@ class TestScheduler(object):  # pylint: disable=too-many-instance-attributes
 
         # A test suite set keeps the sorted test suite list as well as the total estimated execution time (if available)
         # for the test suites within the list.
-        test_suite_sets = [{"test_suites": [], "total_exec_time": 0 if idx != 2 else None} for idx in range(5)]
+        test_suite_sets: list[dict[str, Any]] = [
+            {"test_suites": [], "total_exec_time": 0 if idx != 2 else None} for idx in range(5)
+        ]
 
         for test_suite in test_suites:
             test_suite_data = self._test_history.get(test_suite.name, None)
@@ -445,10 +490,10 @@ class TestScheduler(object):  # pylint: disable=too-many-instance-attributes
                 test_suite_sets[2]["test_suites"].append({"test_suite": test_suite, "exec_time": None})
             else:
                 # Test suites with multiple tests are placed in the set where the highest priority test belongs
-                highest_priority_set = None
-                exec_time = 0
+                highest_priority_set: int | None = None
+                exec_time = 0.0
                 for test_name in test_suite.test_names:
-                    test_data = test_suite_data.get(test_name, False)
+                    test_data = test_suite_data.get(test_name, None)
                     set_idx = 2  # Default set for new test suites
 
                     if test_data:
@@ -469,11 +514,13 @@ class TestScheduler(object):  # pylint: disable=too-many-instance-attributes
                         min(highest_priority_set, set_idx) if highest_priority_set is not None else set_idx
                     )
 
-                test_suite_sets[highest_priority_set]["test_suites"].append(
+                # Fall back to set 2 (new/no-history) when a suite has no test names to score.
+                target_set = highest_priority_set if highest_priority_set is not None else 2
+                test_suite_sets[target_set]["test_suites"].append(
                     {"test_suite": test_suite, "exec_time": exec_time}
                 )
-                if highest_priority_set != 2:
-                    test_suite_sets[highest_priority_set]["total_exec_time"] += exec_time
+                if target_set != 2:
+                    test_suite_sets[target_set]["total_exec_time"] += exec_time
 
         for set_idx, test_suite_set in enumerate(test_suite_sets):
             if set_idx == 2:
@@ -482,7 +529,13 @@ class TestScheduler(object):  # pylint: disable=too-many-instance-attributes
 
         return test_suite_sets
 
-    def __init__(self, test_suites, num_threads, latest_dependency_updates, test_history):
+    def __init__(
+        self,
+        test_suites: Iterable[TestSuiteLike],
+        num_threads: int,
+        latest_dependency_updates: dict[str, float | None],
+        test_history: dict[str, dict[str, dict[str, Any]]],
+    ) -> None:
         self._num_threads = num_threads
         self._latest_dependency_updates = latest_dependency_updates
         self._test_history = test_history
@@ -490,16 +543,18 @@ class TestScheduler(object):  # pylint: disable=too-many-instance-attributes
         self._lock = threading.Lock()
         self._num_tests = sum(len(test_suite_set["test_suites"]) for test_suite_set in self._test_suite_sets)
         self._num_done = 0
-        self._thread_status = [{"start_time": None, "exec_time": None} for _ in range(num_threads)]
+        self._thread_status: list[dict[str, float | None]] = [
+            {"start_time": None, "exec_time": None} for _ in range(num_threads)
+        ]
 
         # Estimate remaing test time
-        self._exec_time_for_remaining_tests = sum(
+        self._exec_time_for_remaining_tests: float = sum(
             test_suite_set["total_exec_time"]
             for test_suite_set in self._test_suite_sets
             if test_suite_set["total_exec_time"]
         )
 
-    def next(self, thread_id):
+    def next(self, thread_id: int) -> TestSuiteLike:  # pylint: disable=too-many-locals
         """
         Return the next test
         """
@@ -510,12 +565,14 @@ class TestScheduler(object):  # pylint: disable=too-many-instance-attributes
 
             # Estimate remaining execution time for threads
             now = time.time()
-            remaining_exec_time_for_threads = []
+            remaining_exec_time_for_threads: list[float] = []
             for idx, status in enumerate(self._thread_status):
-                if (idx == thread_id) or not (status["start_time"] and status["exec_time"]):
+                start_time = status["start_time"]
+                exec_time_status = status["exec_time"]
+                if (idx == thread_id) or not (start_time and exec_time_status):
                     remaining_exec_time_for_threads.append(0)
                 else:
-                    remaining_exec_time_for_threads.append(max(0, status["start_time"] + status["exec_time"] - now))
+                    remaining_exec_time_for_threads.append(max(0.0, start_time + exec_time_status - now))
 
             # Estimate time to completion for all threads assuming perfect load-balancing
             time_to_completion = (
@@ -551,9 +608,10 @@ class TestScheduler(object):  # pylint: disable=too-many-instance-attributes
                 self._exec_time_for_remaining_tests -= exec_time
             self._thread_status[thread_id].update(exec_time=exec_time, start_time=now)
 
-            return test_suite_data["test_suite"]
+            test_suite_result: TestSuiteLike = test_suite_data["test_suite"]
+            return test_suite_result
 
-    def test_done(self, thread_id):
+    def test_done(self, thread_id: int) -> None:
         """
         Signal that a test has been done
         """
@@ -562,11 +620,11 @@ class TestScheduler(object):  # pylint: disable=too-many-instance-attributes
             self._thread_status[thread_id]["exec_time"] = None
             self._num_done += 1
 
-    def is_finished(self):
+    def is_finished(self) -> bool:
         with self._lock:  # pylint: disable=not-context-manager
             return self._num_done >= self._num_tests
 
-    def wait_for_finish(self):
+    def wait_for_finish(self) -> None:
         """
         Block until all tests have been done
         """
@@ -578,25 +636,27 @@ LEGAL_CHARS = string.printable
 ILLEGAL_CHARS = ' <>"|:*%?\\/#&;()'
 
 
-def _is_legal(char):
+def _is_legal(char: str) -> bool:
     """
     Return true if the character is legal to have in a file name
     """
     return (char in LEGAL_CHARS) and (char not in ILLEGAL_CHARS)
 
 
-def wrap(file_obj, use_color=True):
+def wrap(file_obj: IO[str], use_color: bool = True) -> IO[str]:
     """
     Wrap file_obj in another stream which handles ANSI color codes using colorama
 
     NOTE:
     imports colorama here to avoid dependency from setup.py importing VUnit before colorama is installed
     """
-    from colorama import (  # type: ignore # pylint: disable=import-outside-toplevel
+    from colorama import (  # pylint: disable=import-outside-toplevel
         AnsiToWin32,
     )
 
     if use_color:
-        return AnsiToWin32(file_obj).stream
+        stream: IO[str] = AnsiToWin32(file_obj).stream
+        return stream
 
-    return AnsiToWin32(file_obj, strip=True, convert=False).stream
+    stream = AnsiToWin32(file_obj, strip=True, convert=False).stream
+    return stream

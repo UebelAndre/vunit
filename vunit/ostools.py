@@ -9,7 +9,9 @@ Provides operating systems dependent functionality that can be easily
 stubbed for testing
 """
 
+from __future__ import annotations
 
+import sys
 import time
 import subprocess
 import threading
@@ -19,13 +21,16 @@ from pathlib import Path
 from os.path import getmtime, relpath, splitdrive
 import os
 from os import getcwd, makedirs
+from typing import Any, Callable, Mapping, Sequence
 import io
 
 import logging
 
 LOGGER = logging.getLogger(__name__)
 
-IS_WINDOWS_SYSTEM = os.name == "nt"
+# `sys.platform == "win32"` (rather than `os.name == "nt"`) so mypy narrows
+# access to Windows-only stdlib attributes inside the True branch.
+IS_WINDOWS_SYSTEM = sys.platform == "win32"
 
 
 class ProgramStatus(object):
@@ -33,25 +38,25 @@ class ProgramStatus(object):
     Maintain global program status to support graceful shutdown
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._shutting_down = False
 
     @property
-    def is_shutting_down(self):
+    def is_shutting_down(self) -> bool:
         with self._lock:  # pylint: disable=not-context-manager
             return self._shutting_down
 
-    def check_for_shutdown(self):
+    def check_for_shutdown(self) -> None:
         if self.is_shutting_down:
             raise KeyboardInterrupt
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         with self._lock:  # pylint: disable=not-context-manager
             LOGGER.debug("ProgramStatus.shutdown")
             self._shutting_down = True
 
-    def reset(self):
+    def reset(self) -> None:
         with self._lock:  # pylint: disable=not-context-manager
             self._shutting_down = False
 
@@ -64,10 +69,10 @@ class InterruptableQueue(object):
     A Queue which can be interrupted
     """
 
-    def __init__(self):
-        self._queue = Queue()
+    def __init__(self) -> None:
+        self._queue: Queue[str | None] = Queue()
 
-    def get(self):
+    def get(self) -> str | None:
         """
         Get a value from the queue
         """
@@ -78,10 +83,10 @@ class InterruptableQueue(object):
             except Empty:
                 pass
 
-    def put(self, value):
+    def put(self, value: str | None) -> None:
         self._queue.put(value)
 
-    def empty(self):
+    def empty(self) -> bool:
         return self._queue.empty()
 
 
@@ -94,13 +99,18 @@ class Process(object):
     class NonZeroExitCode(Exception):
         pass
 
-    def __init__(self, args, cwd=None, env=None):
+    def __init__(
+        self,
+        args: Sequence[str],
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         self._args = args
 
         # Create process with new process group
         # Sending a signal to a process group will send it to all children
         # Hopefully this way no orphaned processes will be left behind
-        if IS_WINDOWS_SYSTEM:  # Windows
+        if sys.platform == "win32":  # Windows
             self._process = subprocess.Popen(  # pylint: disable=consider-using-with
                 args,
                 bufsize=0,
@@ -130,21 +140,30 @@ class Process(object):
         LOGGER.debug("Started process with pid=%i: '%s'", self._process.pid, (" ".join(args)))
 
         self._queue = InterruptableQueue()
-        self._reader = AsynchronousFileReader(self._process.stdout, self._queue)
+        stdout = self._process.stdout
+        if stdout is None:
+            raise RuntimeError("Process was started without stdout PIPE")
+        # ``universal_newlines=True`` above causes ``subprocess`` to return a
+        # ``TextIOWrapper``. Narrow explicitly so we can access ``.buffer``.
+        if not isinstance(stdout, io.TextIOWrapper):
+            raise RuntimeError(f"Process stdout is not a TextIOWrapper: {type(stdout)!r}")
+        self._reader = AsynchronousFileReader(stdout, self._queue)
         self._reader.start()
 
-    def write(self, *args, **kwargs):
+    def write(self, *args: Any, **kwargs: Any) -> None:
         """Write to stdin"""
-        if not self._process.stdin.closed:
-            self._process.stdin.write(*args, **kwargs)
+        stdin = self._process.stdin
+        if stdin is not None and not stdin.closed:
+            stdin.write(*args, **kwargs)
 
-    def writeline(self, line):
+    def writeline(self, line: str) -> None:
         """Write a line to stdin"""
-        if not self._process.stdin.closed:
-            self._process.stdin.write(line + "\n")
-            self._process.stdin.flush()
+        stdin = self._process.stdin
+        if stdin is not None and not stdin.closed:
+            stdin.write(line + "\n")
+            stdin.flush()
 
-    def next_line(self):
+    def next_line(self) -> str | int:
         """
         Return either the next line or the exit code
         """
@@ -159,7 +178,7 @@ class Process(object):
         retcode = self.wait()
         return retcode
 
-    def wait(self):
+    def wait(self) -> int:
         """
         Wait while without completely blocking to avoid
         deadlock when shutting down
@@ -170,13 +189,13 @@ class Process(object):
             LOGGER.debug("Waiting for process with pid=%i to stop", self._process.pid)
         return self._process.returncode
 
-    def is_alive(self):
+    def is_alive(self) -> bool:
         """
         Returns true if alive
         """
         return self._process.poll() is None
 
-    def consume_output(self, callback=print):
+    def consume_output(self, callback: Callable[[str], Any] | None = print) -> None:
         """
         Consume the output of the process.
         The output is interpreted as UTF-8 text.
@@ -185,7 +204,7 @@ class Process(object):
         @raises Process.NonZeroExitCode when the process does not exit with code zero
         """
 
-        def default_callback(*args, **kwargs):
+        def default_callback(*args: Any, **kwargs: Any) -> None:
             pass
 
         if not callback:
@@ -205,7 +224,7 @@ class Process(object):
             if retcode != 0:
                 raise Process.NonZeroExitCode
 
-    def terminate(self):
+    def terminate(self) -> None:
         """
         Terminate the process
         """
@@ -232,10 +251,12 @@ class Process(object):
         )
 
         self._reader.join()
-        self._process.stdout.close()
-        self._process.stdin.close()
+        if self._process.stdout is not None:
+            self._process.stdout.close()
+        if self._process.stdin is not None:
+            self._process.stdin.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         try:
             self.terminate()
         except KeyboardInterrupt:
@@ -249,14 +270,14 @@ class AsynchronousFileReader(threading.Thread):
     be consumed in another thread.
     """
 
-    def __init__(self, fd, queue, encoding="utf-8"):
+    def __init__(self, fd: io.TextIOWrapper, queue: InterruptableQueue, encoding: str = "utf-8") -> None:
         threading.Thread.__init__(self)
 
         self._fd = io.TextIOWrapper(fd.buffer, encoding=encoding, errors="ignore")
         self._queue = queue
         self._encoding = encoding
 
-    def run(self):
+    def run(self) -> None:
         """The body of the tread: read lines and put them on the queue."""
         for line in iter(self._fd.readline, ""):
             if PROGRAM_STATUS.is_shutting_down:
@@ -267,12 +288,12 @@ class AsynchronousFileReader(threading.Thread):
             self._queue.put(string)
         self._queue.put(None)
 
-    def eof(self):
+    def eof(self) -> bool:
         """Check whether there is no more content to expect."""
         return not self.is_alive() and self._queue.empty()
 
 
-def read_file(file_name, encoding="utf-8", newline=None):
+def read_file(file_name: str | os.PathLike[str], encoding: str = "utf-8", newline: str | None = None) -> str:
     """To stub during testing"""
     try:
         with io.open(file_name, "r", encoding=encoding, newline=newline) as file_to_read:
@@ -289,7 +310,7 @@ def read_file(file_name, encoding="utf-8", newline=None):
     return data
 
 
-def write_file(file_name, contents, encoding="utf-8"):
+def write_file(file_name: str | os.PathLike[str], contents: str, encoding: str = "utf-8") -> None:
     """To stub during testing"""
 
     path = str(Path(file_name).parent)
@@ -303,22 +324,22 @@ def write_file(file_name, contents, encoding="utf-8"):
         file_to_write.write(contents.encode(encoding=encoding))
 
 
-def file_exists(file_name):
+def file_exists(file_name: str | os.PathLike[str]) -> bool:
     """To stub during testing"""
     return Path(file_name).exists()
 
 
-def get_modification_time(file_name):
+def get_modification_time(file_name: str | os.PathLike[str]) -> float:
     """To stub during testing"""
     return getmtime(file_name)
 
 
-def get_time():
+def get_time() -> float:
     """To stub during testing"""
     return time.time()
 
 
-def renew_path(path):
+def renew_path(path: str | os.PathLike[str]) -> None:
     """
     Ensure path directory exists and is empty
 
@@ -340,7 +361,7 @@ def renew_path(path):
     makedirs(path)
 
 
-def simplify_path(path):
+def simplify_path(path: str) -> str:
     """
     Return relative path towards current working directory
     unless it is a separate Windows drive

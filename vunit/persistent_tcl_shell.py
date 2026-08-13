@@ -8,8 +8,11 @@
 A persistent TCL shell to avoid startup overhead in TCL-based simulators
 """
 
+from __future__ import annotations
+
 import threading
 import logging
+from typing import Callable
 from vunit.ostools import Process
 
 LOGGER = logging.getLogger(__name__)
@@ -20,12 +23,12 @@ class PersistentTclShell(object):
     A persistent TCL shell
     """
 
-    def __init__(self, create_process):
-        self._processes = {}
+    def __init__(self, create_process: Callable[[int | None], Process]) -> None:
+        self._processes: dict[int | None, Process] = {}
         self._lock = threading.Lock()
         self._create_process = create_process
 
-    def _process(self):
+    def _process(self) -> Process:
         """
         Create the vsim process
         """
@@ -43,8 +46,8 @@ class PersistentTclShell(object):
             self._processes[ident] = process
 
         process.writeline("puts #VUNIT_RETURN")
+        consumer = SilentOutputConsumer()
         try:
-            consumer = SilentOutputConsumer()
             process.consume_output(consumer)
         except Process.NonZeroExitCode:
             # Print output if background vsim process startup failed
@@ -53,7 +56,7 @@ class PersistentTclShell(object):
             raise
         return process
 
-    def execute(self, cmd):
+    def execute(self, cmd: str) -> None:
         """
         Execute a command to the persistent TCL shell
         """
@@ -62,7 +65,7 @@ class PersistentTclShell(object):
         process.writeline("puts #VUNIT_RETURN")
         process.consume_output(output_consumer)
 
-    def read_var(self, varname):
+    def read_var(self, varname: str) -> str:
         """
         Read a variable from the persistent TCL shell
         """
@@ -70,14 +73,16 @@ class PersistentTclShell(object):
         process.writeline(f"puts #VUNIT_READVAR=${varname!s}")
         consumer = ReadVarOutputConsumer()
         process.consume_output(consumer)
+        if consumer.var is None:
+            raise RuntimeError(f"Persistent TCL shell did not return a value for variable {varname!s}")
         return consumer.var
 
-    def read_bool(self, varname):
+    def read_bool(self, varname: str) -> bool:
         result = self.read_var(varname).lower()
         assert result in ("true", "false")
         return result == "true"
 
-    def teardown(self):
+    def teardown(self) -> None:
         """
         Teardown all active processes before shutdown
         """
@@ -91,14 +96,14 @@ class PersistentTclShell(object):
                     proc.wait()
             self._processes = {}
 
-    def __del__(self):
+    def __del__(self) -> None:
         try:
             self.teardown()
         except KeyboardInterrupt:
             LOGGER.debug("PersistentTclShell.__del__: Ignoring KeyboardInterrupt")
 
 
-def output_consumer(line):
+def output_consumer(line: str) -> bool | None:
     """
     Consume output until reaching #VUNIT_RETURN
     """
@@ -114,10 +119,10 @@ class SilentOutputConsumer(object):
     Consume output until reaching #VUNIT_RETURN, silent
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.output = ""
 
-    def __call__(self, line):
+    def __call__(self, line: str) -> bool | None:
         if line.endswith("#VUNIT_RETURN"):
             return True
 
@@ -130,9 +135,9 @@ class ReadVarOutputConsumer(object):
     Consume output from modelsim and print with indentation
     """
 
-    def __init__(self):
-        self.var = None
+    def __init__(self) -> None:
+        self.var: str | None = None
 
-    def __call__(self, line):
+    def __call__(self, line: str) -> bool:
         self.var = line.split("#VUNIT_READVAR=")[-1].strip()
         return True

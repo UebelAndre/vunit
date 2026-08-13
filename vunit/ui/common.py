@@ -8,12 +8,13 @@
 UI common functions
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from glob import glob
 from os import environ
 from logging import getLogger
-from typing import Optional, List
-from ..sim_if import is_string_not_iterable
+from typing import Any, Iterable
 from ..vhdl_standard import VHDL, VHDLStandard
 
 LOGGER = getLogger(__name__)
@@ -21,7 +22,7 @@ LOGGER = getLogger(__name__)
 TEST_OUTPUT_PATH = "test_output"
 
 
-def select_vhdl_standard(vhdl_standard: Optional[str] = None) -> VHDLStandard:
+def select_vhdl_standard(vhdl_standard: str | None = None) -> VHDLStandard:
     """
     Select VHDL standard either from class initialization or according to environment variable VUNIT_VHDL_STANDARD
     """
@@ -35,7 +36,7 @@ def select_vhdl_standard(vhdl_standard: Optional[str] = None) -> VHDLStandard:
         raise
 
 
-def lower_generics(generics):
+def lower_generics(generics: dict[str, Any]) -> dict[str, Any]:
     """
     Convert all generics names to lower case to match internal representation.
     @TODO Maybe warn in case of conflict. VHDL forbids this though so the user will notice anyway.
@@ -43,7 +44,7 @@ def lower_generics(generics):
     return dict((name.lower(), value) for name, value in generics.items())
 
 
-def check_not_empty(lst, allow_empty, error_msg):
+def check_not_empty(lst: list[Any], allow_empty: bool | None, error_msg: str) -> list[Any]:
     """
     Raise ValueError if the list is empty unless allow_empty is True
     Returns the list
@@ -53,18 +54,22 @@ def check_not_empty(lst, allow_empty, error_msg):
     return lst
 
 
-def get_checked_file_names_from_globs(pattern, allow_empty):
+def get_checked_file_names_from_globs(
+    pattern: str | Path | Iterable[str | Path],
+    allow_empty: bool | None,
+) -> list[str]:
     """
     Get file names from globs and check that exist
     """
-    if is_string_not_iterable(pattern):
+    patterns: Iterable[str | Path]
+    if isinstance(pattern, str):
         patterns = [pattern]
     elif isinstance(pattern, Path):
         patterns = [str(pattern)]
     else:
         patterns = pattern
 
-    file_names: List[str] = []
+    file_names: list[str] = []
     for pattern_instance in patterns:
         new_file_names = glob(str(pattern_instance), recursive=True)
         check_not_empty(

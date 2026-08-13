@@ -8,9 +8,13 @@
 UI class Results
 """
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Dict, Union
 from .common import TEST_OUTPUT_PATH
+
+from ..sim_if import SimulatorInterface
+from ..test.report import TestReport
 
 
 class Results(object):
@@ -18,12 +22,17 @@ class Results(object):
     Gives access to results after running tests
     """
 
-    def __init__(self, output_path, simulator_if, report):
+    def __init__(
+        self,
+        output_path: str | Path,
+        simulator_if: SimulatorInterface,
+        report: TestReport,
+    ) -> None:
         self._output_path = output_path
         self._simulator_if = simulator_if
         self._report = report
 
-    def merge_coverage(self, file_name, args=None):
+    def merge_coverage(self, file_name: str, args: list[str] | None = None) -> None:
         """
         Create a merged coverage report from the individual coverage files
 
@@ -32,7 +41,7 @@ class Results(object):
         """
         self._simulator_if.merge_coverage(file_name=file_name, args=args)
 
-    def get_report(self):
+    def get_report(self) -> Report:
         """
         Get a report (dictionary) of tests: status, time and output path
 
@@ -62,9 +71,9 @@ class Report(object):
     :data tests: Dictionary of :class:`TestResult` objects
     """
 
-    def __init__(self, output_path: Union[str, Path]):
+    def __init__(self, output_path: str | Path) -> None:
         self.output_path = Path(output_path)
-        self.tests: Dict[str, TestResult] = {}
+        self.tests: dict[str, TestResult] = {}
 
 
 class TestResult(object):
@@ -92,7 +101,13 @@ class TestResult(object):
        vu.main(post_run=post_func)
     """
 
-    def __init__(self, test_output_path: Union[str, Path], status, time, path: Union[str, Path]):
+    def __init__(
+        self,
+        test_output_path: str | Path,
+        status: str,
+        time: float,
+        path: str | Path,
+    ) -> None:
         self._test_output_path = Path(test_output_path)
         self.status = status
         self.time = time

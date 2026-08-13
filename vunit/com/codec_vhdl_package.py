@@ -7,8 +7,10 @@
 """
 Module containing the CodecVHDLPackage class.
 """
+from __future__ import annotations
+
 from string import Template
-from vunit.vhdl_parser import VHDLPackage
+from vunit.vhdl_parser import VHDLPackage, VHDLEnumerationType, VHDLRecordType, VHDLArrayType
 from vunit.vhdl_parser import remove_comments
 from vunit.com.codec_vhdl_enumeration_type import CodecVHDLEnumerationType
 from vunit.com.codec_vhdl_array_type import CodecVHDLArrayType
@@ -19,37 +21,75 @@ class CodecVHDLPackage(VHDLPackage):
     """Class derived from VHDLPackage to provide codec generator functionality for the data types definied
     in the package."""
 
-    def __init__(self, identifier, enumeration_types, record_types, array_types):
+    def __init__(
+        self,
+        identifier: str,
+        enumeration_types: list[VHDLEnumerationType],
+        record_types: list[VHDLRecordType],
+        array_types: list[VHDLArrayType],
+    ) -> None:
         super().__init__(identifier, enumeration_types, record_types, array_types)
-        self._template = None
+        self._template: PackageCodecTemplate = PackageCodecTemplate()
+
+    @staticmethod
+    def _as_codec_record(record: VHDLRecordType) -> CodecVHDLRecordType:
+        """Narrow a VHDLRecordType stored in this package to its codec-aware subtype."""
+        if not isinstance(record, CodecVHDLRecordType):
+            raise RuntimeError(
+                f"Expected CodecVHDLRecordType instance, got {type(record).__name__}"
+            )
+        return record
+
+    @staticmethod
+    def _as_codec_array(array: VHDLArrayType) -> CodecVHDLArrayType:
+        """Narrow a VHDLArrayType stored in this package to its codec-aware subtype."""
+        if not isinstance(array, CodecVHDLArrayType):
+            raise RuntimeError(
+                f"Expected CodecVHDLArrayType instance, got {type(array).__name__}"
+            )
+        return array
+
+    @staticmethod
+    def _as_codec_enum(enum: VHDLEnumerationType) -> CodecVHDLEnumerationType:
+        """Narrow a VHDLEnumerationType stored in this package to its codec-aware subtype."""
+        if not isinstance(enum, CodecVHDLEnumerationType):
+            raise RuntimeError(
+                f"Expected CodecVHDLEnumerationType instance, got {type(enum).__name__}"
+            )
+        return enum
 
     @classmethod
-    def parse(cls, code):
+    def parse(cls, code: str) -> CodecVHDLPackage:
         """
         Return a new VHDLPackage instance for a single package found within the code
         """
         code = remove_comments(code).lower()
+        package_start = cls._package_start_re.match(code)
+        if package_start is None:
+            raise ValueError("Expected code to start with a VHDL package declaration")
         return cls(
-            cls._package_start_re.match(code).group("id"),
+            package_start.group("id"),
             list(CodecVHDLEnumerationType.find(code)),
             list(CodecVHDLRecordType.find(code)),
             list(CodecVHDLArrayType.find(code)),
         )
 
     @classmethod
-    def find_named_package(cls, code, name):
+    def find_named_package(cls, code: str, name: str) -> CodecVHDLPackage | None:
         """Find and return the named package in the code (if it exists)"""
 
         for package in cls.find(code):
             if package.identifier == name:
+                if not isinstance(package, CodecVHDLPackage):
+                    raise RuntimeError(
+                        "Expected CodecVHDLPackage instance from CodecVHDLPackage.find()"
+                    )
                 return package
 
         return None
 
-    def generate_codecs_and_support_functions(self):
+    def generate_codecs_and_support_functions(self) -> tuple[str, str]:
         """Generate codecs and communication support functions for the data types defined in self."""
-
-        self._template = PackageCodecTemplate()
 
         declarations = ""
         definitions = ""
@@ -108,7 +148,7 @@ class CodecVHDLPackage(VHDLPackage):
 
         return declarations, definitions
 
-    def _generate_record_codec_and_to_string_functions(self):
+    def _generate_record_codec_and_to_string_functions(self) -> tuple[str, str]:
         """Generate codecs and to_string functions for all record data types."""
 
         declarations = ""
@@ -117,12 +157,12 @@ class CodecVHDLPackage(VHDLPackage):
             (
                 new_declarations,
                 new_definitions,
-            ) = record.generate_codecs_and_support_functions()
+            ) = self._as_codec_record(record).generate_codecs_and_support_functions()
             declarations += new_declarations
             definitions += new_definitions
         return declarations, definitions
 
-    def _generate_array_codec_and_to_string_functions(self):
+    def _generate_array_codec_and_to_string_functions(self) -> tuple[str, str]:
         """Generate codecs and to_string functions for all array data types."""
 
         declarations = ""
@@ -136,22 +176,24 @@ class CodecVHDLPackage(VHDLPackage):
             (
                 new_declarations,
                 new_definitions,
-            ) = array.generate_codecs_and_support_functions()
+            ) = self._as_codec_array(array).generate_codecs_and_support_functions()
             declarations += new_declarations
             definitions += new_definitions
 
         return declarations, definitions
 
-    def _create_enumeration_of_all_msg_types(self):
+    def _create_enumeration_of_all_msg_types(
+        self,
+    ) -> tuple[CodecVHDLEnumerationType | None, list[str]]:
         """Create an enumeration type containing all valid message types. These message types are collected from
         records with a msg_type element which has an enumerated data type."""
 
-        msg_type_enumeration_types = []
+        msg_type_enumeration_types: list[str] = []
         for record in self.record_types:
             if record.elements[0].identifier_list[0] == "msg_type":
                 msg_type_enumeration_types.append(record.elements[0].subtype_indication.code)
 
-        msg_type_enumeration_literals = []
+        msg_type_enumeration_literals: list[str] = []
         for enum in self.enumeration_types:
             if enum.identifier in msg_type_enumeration_types:
                 for literal in enum.literals:
@@ -160,6 +202,7 @@ class CodecVHDLPackage(VHDLPackage):
 
                     msg_type_enumeration_literals.append(literal)
 
+        all_msg_types_enumeration_type: CodecVHDLEnumerationType | None
         if msg_type_enumeration_literals:
             all_msg_types_enumeration_type = CodecVHDLEnumerationType(
                 self.identifier + "_msg_type_t", msg_type_enumeration_literals
@@ -170,16 +213,19 @@ class CodecVHDLPackage(VHDLPackage):
         return all_msg_types_enumeration_type, msg_type_enumeration_types
 
     def _generate_enumeration_codec_and_to_string_functions(
-        self, all_msg_types_enumeration_type, msg_type_enumeration_types
-    ):
+        self,
+        all_msg_types_enumeration_type: CodecVHDLEnumerationType | None,
+        msg_type_enumeration_types: list[str],
+    ) -> tuple[str, str]:
         """Generate codecs and to_string functions for all enumeration data types."""
 
         declarations = ""
         definitions = ""
         enumeration_offset = 0
-        for enum in self.enumeration_types + (
-            [all_msg_types_enumeration_type] if all_msg_types_enumeration_type is not None else []
-        ):
+        enums: list[VHDLEnumerationType] = list(self.enumeration_types)
+        if all_msg_types_enumeration_type is not None:
+            enums.append(all_msg_types_enumeration_type)
+        for enum in enums:
             if enum.identifier in msg_type_enumeration_types:
                 offset = enumeration_offset
                 enumeration_offset += len(enum.literals)
@@ -189,13 +235,13 @@ class CodecVHDLPackage(VHDLPackage):
             (
                 new_declarations,
                 new_definitions,
-            ) = enum.generate_codecs_and_support_functions(offset)
+            ) = self._as_codec_enum(enum).generate_codecs_and_support_functions(offset)
             declarations += new_declarations
             definitions += new_definitions
 
         return declarations, definitions
 
-    def _generate_msg_type_encoders(self):  # pylint: disable=too-many-locals
+    def _generate_msg_type_encoders(self) -> tuple[str, str]:  # pylint: disable=too-many-locals
         """Generate message type encoders for records with the initial element = msg_type. An encoder is
         generated for each value of the enumeration data type for msg_type. For example, if the record
         has two message types, read and write, and two other fields, addr and data, then two encoders,
@@ -205,7 +251,7 @@ class CodecVHDLPackage(VHDLPackage):
         declarations = ""
         definitions = ""
 
-        enumeration_types = {}
+        enumeration_types: dict[str, list[str]] = {}
         for enum in self.enumeration_types:
             enumeration_types[enum.identifier] = enum.literals
 
@@ -218,9 +264,9 @@ class CodecVHDLPackage(VHDLPackage):
                 continue
 
             for value in msg_type_values:
-                parameter_list = []
-                parameter_type_list = []
-                encoding_list = []
+                parameter_list: list[str] = []
+                parameter_type_list: list[str] = []
+                encoding_list: list[str] = []
                 for element in record.elements:
                     for identifier in element.identifier_list:
                         if identifier != "msg_type":
@@ -254,14 +300,14 @@ class CodecVHDLPackage(VHDLPackage):
 
         return declarations, definitions
 
-    def _generate_get_functions(self):
+    def _generate_get_functions(self) -> tuple[str, str]:
         """Generate a get function which will return the message type for records"""
 
         declarations = ""
         definitions = ""
 
         msg_type_record_types = self._get_records_with_an_initial_msg_type_element()
-        msg_type_types = []
+        msg_type_types: list[str] = []
         for record in msg_type_record_types:
             msg_type_type = record.elements[0].subtype_indication.code
             if msg_type_type not in msg_type_types:
@@ -271,10 +317,10 @@ class CodecVHDLPackage(VHDLPackage):
 
         return declarations, definitions
 
-    def _get_records_with_an_initial_msg_type_element(self):
+    def _get_records_with_an_initial_msg_type_element(self) -> list[VHDLRecordType]:
         """Find all record types starting with a msg_type element"""
 
-        msg_type_record_types = []
+        msg_type_record_types: list[VHDLRecordType] = []
         for record in self.record_types:
             if record.elements[0].identifier_list[0] == "msg_type":
                 msg_type_record_types.append(record)
@@ -285,7 +331,7 @@ class CodecVHDLPackage(VHDLPackage):
 class PackageCodecTemplate(object):
     """This class contains package codec templates."""
 
-    msg_type_record_codec_declaration = Template(
+    msg_type_record_codec_declaration: Template = Template(
         """\
   function $name$parameter_part
     return string;
@@ -294,7 +340,7 @@ class PackageCodecTemplate(object):
 """
     )
 
-    get_specific_msg_type_declaration = Template(
+    get_specific_msg_type_declaration: Template = Template(
         """\
   function get_$type (
     constant code : string)
@@ -303,13 +349,13 @@ class PackageCodecTemplate(object):
 """
     )
 
-    all_msg_types_enumeration_type_declaration = Template(
+    all_msg_types_enumeration_type_declaration: Template = Template(
         """\
   type $identifier is ($literals);
 """
     )
 
-    get_msg_type_declaration = Template(
+    get_msg_type_declaration: Template = Template(
         """\
   function get_msg_type (
     constant code : string)
@@ -318,7 +364,7 @@ class PackageCodecTemplate(object):
 """
     )
 
-    msg_type_record_codec_definition = Template(
+    msg_type_record_codec_definition: Template = Template(
         """\
   function $name$parameter_part
     return string is
@@ -329,7 +375,7 @@ class PackageCodecTemplate(object):
 """
     )
 
-    get_specific_msg_type_definition = Template(
+    get_specific_msg_type_definition: Template = Template(
         """\
   function get_$type (
     constant code : string)
@@ -341,7 +387,7 @@ class PackageCodecTemplate(object):
 """
     )
 
-    get_msg_type_definition = Template(
+    get_msg_type_definition: Template = Template(
         """\
   function get_msg_type (
     constant code : string)

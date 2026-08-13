@@ -8,7 +8,10 @@
 Preprocessing of check functions
 """
 
+from __future__ import annotations
+
 import re
+from typing import Iterable, Iterator
 from vunit.ui.preprocessor import Preprocessor
 
 
@@ -17,7 +20,7 @@ class CheckPreprocessor(Preprocessor):
     Preprocessing of check functions adding helpful message to check_relation calls.
     """
 
-    def __init__(self, order=2000):
+    def __init__(self, order: int = 2000) -> None:
         super().__init__(order)
         self._find_operators = re.compile(r"\?/=|\?<=|\?>=|\?<|\?>|\?=|/=|<=|>=|<|>|=", re.MULTILINE)
         self._find_quotes = re.compile(r'"|' + r"'", re.MULTILINE)
@@ -26,7 +29,7 @@ class CheckPreprocessor(Preprocessor):
         self._leading_paranthesis = re.compile(r"[\s(]*")
         self._trailing_paranthesis = re.compile(r"[\s)]*")
 
-    def run(self, code, file_name):  # pylint: disable=unused-argument
+    def run(self, code: str, file_name: str) -> str:  # pylint: disable=unused-argument
         check_relation_pattern = re.compile(r"[^a-zA-Z0-9_](?P<call>check_relation)\s*(?P<parameters>\()", re.MULTILINE)
 
         check_relation_calls = list(check_relation_pattern.finditer(code))
@@ -47,14 +50,14 @@ class CheckPreprocessor(Preprocessor):
 
         return code
 
-    def _extract_relation(self, code, check):
+    def _extract_relation(self, code: str, check: re.Match[str]) -> tuple[Relation | None, int]:
         # pylint: disable=missing-docstring
-        def end_of_parameter(token):
+        def end_of_parameter(token: Token) -> bool:
             return token.value == "," if token.level == 1 else token.level == 0
 
-        parameter_tokens = []
+        parameter_tokens: list[Token] = []
         index = 1
-        relation = None
+        relation: Relation | None = None
         for token in self._classify_tokens(code[check.start("parameters") + 1 :]):
             add_token = True
             if token.type == Token.NORMAL:
@@ -86,10 +89,10 @@ class CheckPreprocessor(Preprocessor):
         return relation, index - 1
 
     @staticmethod
-    def _classify_tokens(code):
+    def _classify_tokens(code: str) -> Iterator[Token]:
         # pylint: disable=missing-docstring
         # pylint: disable=too-many-branches
-        def even_quotes(code):
+        def even_quotes(code: str) -> bool:
             n_quotes = 0
             for index in range(0, len(code), 2):
                 if code[index] != "'":
@@ -144,9 +147,13 @@ class CheckPreprocessor(Preprocessor):
 
             code_section = next_code_section
 
-    def _get_relation_from_parameter(self, tokens):
+    def _get_relation_from_parameter(self, tokens: list[Token]) -> Relation | None:
         # pylint: disable=missing-docstring
-        def find_top_level_match(matches, tokens, top_level=1):
+        def find_top_level_match(
+            matches: Iterable[re.Match[str]] | None,
+            tokens: list[Token],
+            top_level: int = 1,
+        ) -> re.Match[str] | None:
             if matches:
                 for match in matches:
                     if not tokens[match.start()].is_quote and tokens[match.start()].level == top_level:
@@ -154,7 +161,7 @@ class CheckPreprocessor(Preprocessor):
 
             return None
 
-        relation = None
+        relation: Relation | None = None
         token_string = "".join([token.value for token in tokens]).strip()
         actual_formal = find_top_level_match(self._actual_formal.finditer(token_string), tokens)
         if actual_formal:
@@ -168,15 +175,14 @@ class CheckPreprocessor(Preprocessor):
         # This operator divides the relation between left and right. The token.level
         # is normally one for the top level but may be higher if the expression is
         # enclosed with parenthesis.
-        top_level = (
-            min(
-                [
-                    self._leading_paranthesis.match(expr).group().count("("),
-                    self._trailing_paranthesis.match(expr[::-1]).group().count(")"),
-                ]
-            )
-            + 1
-        )
+        lead = self._leading_paranthesis.match(expr)
+        trail = self._trailing_paranthesis.match(expr[::-1])
+        if lead is not None and trail is not None:
+            top_level = min([lead.group().count("("), trail.group().count(")")]) + 1
+        else:
+            # Both regexes use `*`, so this branch is unreachable in practice, but guard
+            # rather than crash on None so a malformed expression falls back to top level 1.
+            top_level = 1
         top_level_match = find_top_level_match(self._find_operators.finditer(expr), tokens[start:], top_level)
         if top_level_match:
             if top_level == 1:
@@ -199,28 +205,28 @@ class Token(object):
     LINE_COMMENT = 3
     BLOCK_COMMENT = 4
 
-    def __init__(self, value):
+    def __init__(self, value: str) -> None:
         self.value = value
-        self.type = None
-        self.level = None
+        self.type: int | None = None
+        self.level: int | None = None
 
     @property
-    def is_comment(self):
+    def is_comment(self) -> bool:
         return self.type in [self.LINE_COMMENT, self.BLOCK_COMMENT]
 
     @property
-    def is_quote(self):
+    def is_quote(self) -> bool:
         return self.type in [self.CHARACTER_LITERAL, self.STRING]
 
 
 class Relation(object):
     # pylint: disable=missing-docstring
-    def __init__(self, left, operand, right):
+    def __init__(self, left: str, operand: str, right: str) -> None:
         self._left = left
         self._operand = operand
         self._right = right
 
-    def make_context_msg(self):
+    def make_context_msg(self) -> str:
         eleft = self._left.replace('"', '""')
         eright = self._right.replace('"', '""')
         return (

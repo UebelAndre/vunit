@@ -20,4 +20,5 @@ class TestMyPy(unittest.TestCase):
 
     @staticmethod
     def test_mypy():
-        check_call([sys.executable, "-m", "mypy", "--namespace-packages", "vunit"])
+        # Strict configuration lives in pyproject.toml under [tool.mypy].
+        check_call([sys.executable, "-m", "mypy"])

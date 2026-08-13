@@ -8,20 +8,37 @@
 A general tokenizer
 """
 
-import collections
+from __future__ import annotations
+
+import logging
 import re
+from typing import Callable, NamedTuple, Sequence
 from vunit.ostools import read_file, file_exists, simplify_path
 
 
-TokenType = collections.namedtuple("TokenType", ["kind", "value", "location"])
-
-
-def Token(kind, value="", location=None):  # pylint: disable=invalid-name
-    return TokenType(kind, value, location)
+LocationInfo = tuple[str | None, tuple[int, int]]
+Location = tuple[LocationInfo, "Location | None"]
 
 
 class TokenKind:
-    pass
+    """
+    Base class for token kinds.  Instances act as singleton sentinels
+    that can also be called as factories producing :class:`TokenType`
+    instances of their own kind.
+    """
+
+    def __call__(self, value: str = "", location: Location | None = None) -> TokenType:
+        return Token(self, value, location)
+
+
+class TokenType(NamedTuple):
+    kind: TokenKind
+    value: str
+    location: Location | None
+
+
+def Token(kind: TokenKind, value: str = "", location: Location | None = None) -> TokenType:  # pylint: disable=invalid-name
+    return TokenType(kind, value, location)
 
 
 def new_token_kind(name: str) -> TokenKind:
@@ -29,14 +46,11 @@ def new_token_kind(name: str) -> TokenKind:
     Create a new token kind with nice __repr__
     """
 
-    def new_token(kind, value="", location=None):
-        """
-        Create new token of kind
-        """
-        return Token(kind, value, location)
-
-    cls = type(name, (object,), {"__repr__": lambda self: name, "__call__": new_token})
+    cls: type[TokenKind] = type(name, (TokenKind,), {"__repr__": lambda self: name})
     return cls()
+
+
+TokenFunc = Callable[[TokenType], "TokenType | None"]
 
 
 class Tokenizer(object):
@@ -44,12 +58,12 @@ class Tokenizer(object):
     Maintain a prioritized list of token regex
     """
 
-    def __init__(self):
-        self._regexs = []
-        self._assoc = {}
-        self._regex = None
+    def __init__(self) -> None:
+        self._regexs: list[tuple[str, str]] = []
+        self._assoc: dict[str, tuple[TokenKind, TokenFunc | None]] = {}
+        self._regex: re.Pattern[str] | None = None
 
-    def add(self, kind, regex, func=None):
+    def add(self, kind: TokenKind, regex: str, func: TokenFunc | None = None) -> TokenKind:
         """
         Add token type
         """
@@ -58,17 +72,25 @@ class Tokenizer(object):
         self._assoc[key] = (kind, func)
         return kind
 
-    def finalize(self):
+    def finalize(self) -> None:
         self._regex = re.compile(
             "|".join(f"(?P<{spec[0]!s}>{spec[1]!s})" for spec in self._regexs),
             re.VERBOSE | re.MULTILINE,
         )
 
-    def tokenize(self, code, file_name=None, previous_location=None, create_locations=False):
+    def tokenize(  # pylint: disable=too-many-locals
+        self,
+        code: str,
+        file_name: str | None = None,
+        previous_location: Location | None = None,
+        create_locations: bool = False,
+    ) -> list[TokenType]:
         """
         Tokenize the code
         """
-        tokens = []
+        if self._regex is None:
+            raise RuntimeError("Tokenizer.finalize() must be called before tokenize()")
+        tokens: list[TokenType] = []
         start = 0
         while True:
             match = self._regex.search(code, pos=start)
@@ -76,20 +98,24 @@ class Tokenizer(object):
                 break
             lexpos = (start, match.end() - 1)
             start = match.end()
-            kind, func = self._assoc[match.lastgroup]
-            value = match.group(match.lastgroup)
+            group_name = match.lastgroup
+            if group_name is None:
+                # All registered patterns use named groups, so this should not happen.
+                continue
+            kind, func = self._assoc[group_name]
+            value = match.group(group_name)
 
+            location: Location | None
             if create_locations:
                 location = ((file_name, lexpos), previous_location)
             else:
                 location = None
 
             token = Token(kind, value, location)
-            if func is not None:
-                token = func(token)
+            transformed: TokenType | None = token if func is None else func(token)
 
-            if token is not None:
-                tokens.append(token)
+            if transformed is not None:
+                tokens.append(transformed)
         return tokens
 
 
@@ -98,32 +124,32 @@ class TokenStream(object):
     Helper class for traversing a stream of tokens
     """
 
-    def __init__(self, tokens):
-        self._tokens = tokens
+    def __init__(self, tokens: Sequence[TokenType]) -> None:
+        self._tokens: Sequence[TokenType] = tokens
         self._idx = 0
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._tokens)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> TokenType:
         return self._tokens[index]
 
     @property
-    def eof(self):
+    def eof(self) -> bool:
         return not self._idx < len(self._tokens)
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         return self._idx
 
     @property
-    def current(self):
+    def current(self) -> TokenType:
         return self._tokens[self._idx]
 
-    def peek(self, offset=0):
+    def peek(self, offset: int = 0) -> TokenType:
         return self._tokens[self._idx + offset]
 
-    def skip_while(self, *kinds):
+    def skip_while(self, *kinds: TokenKind) -> int:
         """
         Skip forward while token kind is present
         """
@@ -133,7 +159,7 @@ class TokenStream(object):
             self._idx += 1
         return self._idx
 
-    def skip_until(self, *kinds):
+    def skip_until(self, *kinds: TokenKind) -> int:
         """
         Skip forward until token kind is present
         """
@@ -143,7 +169,7 @@ class TokenStream(object):
             self._idx += 1
         return self._idx
 
-    def pop(self):
+    def pop(self) -> TokenType:
         """
         Return current token and advance stream
         """
@@ -153,7 +179,7 @@ class TokenStream(object):
         self._idx += 1
         return self._tokens[self._idx - 1]
 
-    def expect(self, *kinds):
+    def expect(self, *kinds: TokenKind) -> TokenType:
         """
         Expect to pop token with any of kinds
         """
@@ -163,11 +189,11 @@ class TokenStream(object):
             raise LocationException.error(f"Expected {expected!s} got {token.kind!s}", token.location)
         return token
 
-    def slice(self, start, end):
-        return self._tokens[start:end]
+    def slice(self, start: int, end: int) -> list[TokenType]:
+        return list(self._tokens[start:end])
 
 
-def describe_location(location, first=True):
+def describe_location(location: Location | None, first: bool = True) -> str:
     """
     Describe the location as a string
     """
@@ -221,25 +247,25 @@ class LocationException(Exception):
     """
 
     @classmethod
-    def error(cls, message, location):
+    def error(cls, message: str, location: Location | None) -> LocationException:
         return cls(message, location, "error")
 
     @classmethod
-    def warning(cls, message, location):
+    def warning(cls, message: str, location: Location | None) -> LocationException:
         return cls(message, location, "warning")
 
     @classmethod
-    def debug(cls, message, location):
+    def debug(cls, message: str, location: Location | None) -> LocationException:
         return cls(message, location, "debug")
 
-    def __init__(self, message, location, severity):
+    def __init__(self, message: str, location: Location | None, severity: str) -> None:
         Exception.__init__(self)
         assert severity in ("debug", "warning", "error")
         self._severtity = severity
         self._message = message
         self._location = location
 
-    def log(self, logger):
+    def log(self, logger: logging.Logger) -> None:
         """
         Log the exception
         """
@@ -253,7 +279,7 @@ class LocationException(Exception):
         method(self._message + "\n%s", describe_location(self._location))
 
 
-def add_previous(location, previous):
+def add_previous(location: Location | None, previous: Location | None) -> Location | None:
     """
     Add previous location
     """
@@ -264,7 +290,7 @@ def add_previous(location, previous):
     return (current, add_previous(old_previous, previous))
 
 
-def strip_previous(location):
+def strip_previous(location: Location | None) -> LocationInfo | None:
     """
     Strip previous location
     """

@@ -8,17 +8,22 @@
 Module for generating VHDL com codecs.
 """
 
+from __future__ import annotations
+
+import os
 from string import Template
 from vunit.ostools import read_file, write_file
 from vunit.com.codec_vhdl_package import CodecVHDLPackage
 
+from vunit.design_unit import DesignUnit
+
 
 def generate_codecs(
-    input_package_design_unit,
-    codec_package_name,  # pylint: disable=too-many-arguments
-    used_packages,
-    output_file,
-):
+    input_package_design_unit: DesignUnit,
+    codec_package_name: str,  # pylint: disable=too-many-arguments
+    used_packages: list[str] | None,
+    output_file: str | os.PathLike[str],
+) -> None:
     """This function generates codecs for the types in the input package and compile the result into
     codec_package_name. used_packages is a list specifying what to include into the result package
     other than the input package. A used package on the format 'lib.pkg' will result in a library and

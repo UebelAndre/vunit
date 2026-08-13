@@ -8,13 +8,15 @@
 Templates common to all datatype codecs.
 """
 
+from __future__ import annotations
+
 from string import Template
 
 
 class DatatypeCodecTemplate(object):
     """Templates when generating codecs"""
 
-    to_string_declarations = Template(
+    to_string_declarations: Template = Template(
         """\
   function to_string (
     constant data : $type)
@@ -23,7 +25,7 @@ class DatatypeCodecTemplate(object):
 """
     )
 
-    codec_declarations = Template(
+    codec_declarations: Template = Template(
         """\
   function encode (
     constant data : $type)

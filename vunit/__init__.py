@@ -14,6 +14,8 @@ from vunit.ui import VUnit
 from vunit.vunit_cli import VUnitCLI
 from vunit.about import version, doc
 
+__all__ = ["VUnit", "VUnitCLI", "ROOT"]
+
 # Repository root
 ROOT = str(Path(__file__).parent.parent.resolve())
 

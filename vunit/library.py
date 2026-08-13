@@ -10,9 +10,15 @@
 Functionality to represent and operate on a HDL code library
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Iterable
 from vunit.vhdl_standard import VHDLStandard
+from vunit.design_unit import DesignUnit, Entity, VHDLDesignUnit
+
+if TYPE_CHECKING:
+    from vunit.source_file import SourceFile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,10 +33,10 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
         name: str,
         directory: str,
         vhdl_standard: VHDLStandard,
-        is_external=False,
+        is_external: bool = False,
         *,
-        file_name: Optional[str] = None,
-    ):
+        file_name: str | None = None,
+    ) -> None:
         self.name = name
         self.directory = directory
         self.file_name = file_name
@@ -38,25 +44,25 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
         # Default VHDL standard for files added unless explicitly set per file
         self.vhdl_standard = vhdl_standard
 
-        self._source_files = {}  # type: ignore
+        self._source_files: dict[str, SourceFile] = {}
 
         # Entity objects
-        self._entities = {}  # type: ignore
-        self._package_bodies = {}  # type: ignore
+        self._entities: dict[str, Entity] = {}
+        self._package_bodies: dict[str, VHDLDesignUnit] = {}
 
-        self.primary_design_units = {}  # type: ignore
+        self.primary_design_units: dict[str, VHDLDesignUnit] = {}
 
         # Entity name to architecture design unit mapping
-        self._architectures = {}  # type: ignore
+        self._architectures: dict[str, dict[str, VHDLDesignUnit]] = {}
 
         # Verilog specific
         # Module objects
-        self.modules = {}  # type: ignore
-        self.verilog_packages = {}  # type: ignore
+        self.modules: dict[str, DesignUnit] = {}
+        self.verilog_packages: dict[str, DesignUnit] = {}
 
         self._is_external = is_external
 
-    def add_source_file(self, source_file):
+    def add_source_file(self, source_file: SourceFile) -> SourceFile:
         """
         Add source file to library unless it exists
 
@@ -80,21 +86,21 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
 
         return source_file
 
-    def get_source_file(self, file_name):
+    def get_source_file(self, file_name: str) -> SourceFile:
         """
         Get source file with file name or raise KeyError
         """
         return self._source_files[file_name]
 
     @property
-    def is_external(self):
+    def is_external(self) -> bool:
         """
         External black box library, typically compiled outside of VUnit
         """
         return self._is_external
 
     @staticmethod
-    def _warning_on_duplication(design_unit, old_file_name):
+    def _warning_on_duplication(design_unit: DesignUnit, old_file_name: str) -> None:
         """
         Utility function to give warning for design unit duplication
         """
@@ -106,7 +112,11 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
             old_file_name,
         )
 
-    def _check_duplication(self, dictionary, design_unit):
+    def _check_duplication(
+        self,
+        dictionary: dict[str, VHDLDesignUnit],
+        design_unit: VHDLDesignUnit,
+    ) -> None:
         """
         Utility function to check if design_unit already in dictionary
         and give warning
@@ -114,7 +124,9 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
         if design_unit.name in dictionary:
             self._warning_on_duplication(design_unit, dictionary[design_unit.name].source_file.name)
 
-    def add_vhdl_design_units(self, design_units):
+    def add_vhdl_design_units(  # pylint: disable=too-many-branches
+        self, design_units: Iterable[VHDLDesignUnit]
+    ) -> None:
         """
         Add VHDL design units to the library
         """
@@ -124,6 +136,11 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
                 self.primary_design_units[design_unit.name] = design_unit
 
                 if design_unit.unit_type == "entity":
+                    if not isinstance(design_unit, Entity):
+                        raise RuntimeError(
+                            f"Design unit {design_unit.name!s} has unit_type 'entity' "
+                            f"but is not an Entity instance"
+                        )
                     if design_unit.name not in self._architectures:
                         self._architectures[design_unit.name] = {}
                     self._entities[design_unit.name] = design_unit
@@ -133,6 +150,10 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
 
             else:
                 if design_unit.unit_type == "architecture":
+                    if design_unit.primary_design_unit is None:
+                        raise RuntimeError(
+                            f"Architecture {design_unit.name!s} has no primary_design_unit"
+                        )
                     if design_unit.primary_design_unit not in self._architectures:
                         self._architectures[design_unit.primary_design_unit] = {}
 
@@ -148,6 +169,10 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
                         self._entities[design_unit.primary_design_unit].add_architecture(design_unit)
 
                 if design_unit.unit_type == "package body":
+                    if design_unit.primary_design_unit is None:
+                        raise RuntimeError(
+                            f"Package body {design_unit.name!s} has no primary_design_unit"
+                        )
                     if design_unit.primary_design_unit in self._package_bodies:
                         self._warning_on_duplication(
                             design_unit,
@@ -155,7 +180,7 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
                         )
                     self._package_bodies[design_unit.primary_design_unit] = design_unit
 
-    def add_verilog_design_units(self, design_units):
+    def add_verilog_design_units(self, design_units: Iterable[DesignUnit]) -> None:
         """
         Add Verilog design units to the library
         """
@@ -172,38 +197,38 @@ class Library(object):  # pylint: disable=too-many-instance-attributes
                     )
                 self.verilog_packages[design_unit.name] = design_unit
 
-    def get_entities(self):
+    def get_entities(self) -> list[Entity]:
         """
         Return a list of all entites in the design with their generic names and architecture names
         """
-        entities = []
+        entities: list[Entity] = []
         for entity in self._entities.values():
             entities.append(entity)
         return entities
 
-    def get_modules(self):
+    def get_modules(self) -> list[DesignUnit]:
         """
         Return a list of all modules in the design
         """
         return list(self.modules.values())
 
-    def get_package_body(self, name):
+    def get_package_body(self, name: str) -> VHDLDesignUnit:
         return self._package_bodies[name]
 
-    def has_entity(self, name):
+    def has_entity(self, name: str) -> bool:
         """
         Return true if entity with 'name' is in library
         """
         return name in self._entities
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, type(self)):
             return self.name == other.name
 
         return False
 
-    def __lt__(self, other):
+    def __lt__(self, other: Library) -> bool:
         return self.name < other.name
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.name)

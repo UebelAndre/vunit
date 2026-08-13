@@ -8,6 +8,9 @@
 Functions to add builtin VHDL code to a project for compilation
 """
 
+from __future__ import annotations
+
+import sys
 from pathlib import Path
 from glob import glob
 import logging
@@ -17,17 +20,24 @@ import importlib.util
 import re
 import operator
 from dataclasses import dataclass
-from typing import TypeVar, Any, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Iterable, TypeVar
 
-try:
-    # Python 3.11+
-    import tomllib  # type: ignore
-except ModuleNotFoundError:
-    import tomli as tomllib  # type: ignore
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
+# pylint: disable=wrong-import-position  # tomllib fallback block above must come first
 from vunit.vhdl_standard import VHDL, VHDLStandard
+from vunit.sim_if import SimulatorInterface
 from vunit.ui.common import get_checked_file_names_from_globs
 from vunit.about import version, VUnitVersion
+
+# pylint: enable=wrong-import-position
+
+if TYPE_CHECKING:
+    from vunit.ui import VUnit
+    from vunit.ui.library import Library
 
 
 LOGGER = logging.getLogger(__name__)
@@ -50,14 +60,22 @@ class Builtins(object):
     Manage VUnit builtins and their dependencies
     """
 
-    def __init__(self, vunit_obj, vhdl_standard: VHDLStandard, simulator_class):
+    def __init__(
+        self,
+        vunit_obj: VUnit,
+        vhdl_standard: VHDLStandard,
+        simulator_class: type[SimulatorInterface] | None,
+    ) -> None:
         self._vunit_obj = vunit_obj
         self._vunit_lib = vunit_obj.add_library("vunit_lib")
         self._vhdl_standard = vhdl_standard
-        self._simulator_class = simulator_class
+        # Fall back to the SimulatorInterface base for default capabilities when no
+        # concrete simulator was selected; only class attributes / classmethods
+        # (never instantiation) are read below.
+        self._simulator_class: type[SimulatorInterface] = simulator_class or SimulatorInterface
         self._builtins_adder = BuiltinsAdder()
 
-        def add(name, deps=tuple()):
+        def add(name: str, deps: tuple[str, ...] | list[str] = tuple()) -> None:
             self._builtins_adder.add_type(name, getattr(self, f"_add_{name!s}"), deps)
 
         add("array_util")  # Removed in v5.0.0
@@ -66,7 +84,7 @@ class Builtins(object):
         add("osvvm")
         add("random", ["osvvm"])
 
-    def add(self, name, args=None):
+    def add(self, name: str, args: dict[str, Any] | None = None) -> None:
         self._builtins_adder.add(name, args)
 
     _VERSION_REQUIREMENT_RE = re.compile(r"(?P<operator>===|~=|<=|!=|==|>=|>|<)\s*(?P<version>.*)", re.VERBOSE)
@@ -116,7 +134,7 @@ class Builtins(object):
         return True
 
     @staticmethod
-    def _to_toml_type(python_type: type) -> Tuple[str, str]:
+    def _to_toml_type(python_type: type) -> tuple[str, str]:
         """Translate Python type to TOML type terminology."""
         mapping = {
             dict: ("table", "a"),
@@ -164,7 +182,7 @@ class Builtins(object):
 
             raise RuntimeError(f"Invalid vunit_pkg.toml: {len(errors)} error(s) found.")
 
-    def _validate_toml(self, data: dict) -> None:
+    def _validate_toml(self, data: dict[str, Any]) -> None:
         """Validate that the TOML specification has the correct format."""
         errors = []
 
@@ -202,7 +220,7 @@ class Builtins(object):
         self._log_validation_errors(errors)
 
     @staticmethod
-    def _read_toml(root: Path, package_name: str) -> dict:
+    def _read_toml(root: Path, package_name: str) -> dict[str, Any]:
         """Read TOML file."""
         toml = root / "vunit_pkg.toml"
 
@@ -211,9 +229,10 @@ class Builtins(object):
 
         try:
             with toml.open("rb") as fptr:
-                return tomllib.load(fptr)
+                parsed: dict[str, Any] = tomllib.load(fptr)
         except tomllib.TOMLDecodeError as exc:
             raise RuntimeError(f"vunit_pkg.toml for package {package_name} is not a valid TOML file") from exc
+        return parsed
 
     @staticmethod
     def _find_package(package_name: str) -> Path:
@@ -296,7 +315,11 @@ class Builtins(object):
                 for include in source["include"]:
                     library.add_source_files(package_root / include, vhdl_standard=use_vhdl_standard)
 
-    def _add_files(self, pattern=None, allow_empty=True):
+    def _add_files(
+        self,
+        pattern: str | Path | Iterable[str | Path],
+        allow_empty: bool = True,
+    ) -> None:
         """
         Add files with naming convention to indicate which standard is supported
         """
@@ -323,7 +346,7 @@ class Builtins(object):
 
             self._vunit_lib.add_source_file(file_name)
 
-    def _add_data_types(self, external=None):
+    def _add_data_types(self, external: dict[str, Any] | None = None) -> None:
         """
         Add data types packages (sources corresponding to VHPIDIRECT arrays, or their placeholders)
 
@@ -346,13 +369,13 @@ class Builtins(object):
             )
 
     @staticmethod
-    def _add_array_util():
+    def _add_array_util() -> None:
         """
         Array utility was removed in v5.0.0. Raise a runtime error.
         """
         raise RuntimeError("Array util was removed in v5.0.0; use 'integer_array_t' instead")
 
-    def _add_random(self):
+    def _add_random(self) -> None:
         """
         Add random pkg
         """
@@ -361,7 +384,7 @@ class Builtins(object):
 
         self._vunit_lib.add_source_files(VHDL_PATH / "random" / "src" / "*.vhd")
 
-    def _add_com(self):
+    def _add_com(self) -> None:
         """
         Add com library
         """
@@ -370,7 +393,7 @@ class Builtins(object):
 
         self._add_files(VHDL_PATH / "com" / "src" / "*.vhd")
 
-    def _add_verification_components(self):
+    def _add_verification_components(self) -> None:
         """
         Add verification component library
         """
@@ -378,7 +401,7 @@ class Builtins(object):
             raise RuntimeError("Verification component library only supports vhdl 2008 and later")
         self._add_files(VHDL_PATH / "verification_components" / "src" / "*.vhd")
 
-    def _add_library_if_not_exist(self, library_name, message):
+    def _add_library_if_not_exist(self, library_name: str, message: str) -> Library | None:
         """
         Check if a library name exists in the project. If not, add it and return a handle.
         """
@@ -389,7 +412,7 @@ class Builtins(object):
             return None
         return self._vunit_obj.add_library(library_name)
 
-    def _add_osvvm(self):
+    def _add_osvvm(self) -> None:
         """
         Add osvvm library
         """
@@ -448,7 +471,7 @@ in your VUnit Git repository? You have to do this first if installing using setu
 
             library.add_source_files(file_name, preprocessors=[])
 
-    def _add_vhdl_logging(self, use_external_log):
+    def _add_vhdl_logging(self, use_external_log: str | Path | None) -> None:
         """
         Add logging functionality
         """
@@ -485,13 +508,17 @@ in your VUnit Git repository? You have to do this first if installing using setu
 
             self._vunit_lib.add_source_file(file_name)
 
-    def add_verilog_builtins(self):
+    def add_verilog_builtins(self) -> None:
         """
         Add Verilog builtins
         """
         self._vunit_lib.add_source_files(VERILOG_PATH / "vunit_pkg.sv")
 
-    def add_vhdl_builtins(self, external=None, use_external_log=None):
+    def add_vhdl_builtins(
+        self,
+        external: dict[str, Any] | None = None,
+        use_external_log: str | Path | None = None,
+    ) -> None:
         """
         Add vunit VHDL builtin libraries
 
@@ -520,14 +547,14 @@ in your VUnit Git repository? You have to do this first if installing using setu
             self._add_files(VHDL_PATH / path / "src" / "*.vhd")
 
 
-def osvvm_is_installed():
+def osvvm_is_installed() -> bool:
     """
     Checks if OSVVM is installed within the VUnit directory structure
     """
     return len(glob(str(VHDL_PATH / "osvvm" / "*.vhd"))) != 0
 
 
-def add_verilog_include_dir(include_dirs):
+def add_verilog_include_dir(include_dirs: list[str]) -> list[str]:
     """
     Add VUnit Verilog include directory
     """
@@ -539,14 +566,20 @@ class BuiltinsAdder(object):
     Class to manage adding of builtins with dependencies
     """
 
-    def __init__(self):
-        self._already_added = {}
-        self._types = {}
+    def __init__(self) -> None:
+        self._already_added: dict[str, dict[str, Any] | None] = {}
+        self._types: dict[str, tuple[Callable[..., None], tuple[str, ...] | list[str]]] = {}
 
-    def add_type(self, name, function, dependencies=tuple()):
+    def add_type(
+        self,
+        name: str,
+        function: Callable[..., None],
+        dependencies: tuple[str, ...] | list[str] = tuple(),
+    ) -> None:
+        """Register a builtin type by name along with the function that installs it."""
         self._types[name] = (function, dependencies)
 
-    def add(self, name, args=None):
+    def add(self, name: str, args: dict[str, Any] | None = None) -> None:
         """
         Add builtin with arguments
         """
@@ -559,7 +592,7 @@ class BuiltinsAdder(object):
                 self.add(dep_name)
             function(**args)
 
-    def _add_check(self, name, args=None):
+    def _add_check(self, name: str, args: dict[str, Any] | None = None) -> bool:
         """
         Check if this package has already been added,
         if it has already been added it must use the same parameters

@@ -8,9 +8,11 @@
 UI classes Library and LibraryList
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from fnmatch import fnmatch
-from typing import Optional
+from typing import Any, Iterable, TYPE_CHECKING
 from ..vhdl_standard import VHDL, VHDLStandard
 from ..project import Project
 from ..source_file import file_type_of, FILE_TYPES, VERILOG_FILE_TYPES
@@ -20,16 +22,21 @@ from .source import SourceFile, SourceFileList
 from .testbench import TestBench
 from .packagefacade import PackageFacade
 
+if TYPE_CHECKING:
+    from ..test.bench_list import TestBenchList
+    from . import VUnit
+    from .preprocessor import Preprocessor
 
-class LibraryList(list):
+
+class LibraryList(list["Library"]):
     """
     A list of :class:`.Library`
     """
 
-    def __init__(self, libraries):
+    def __init__(self, libraries: Iterable[Library]) -> None:
         list.__init__(self, libraries)
 
-    def get_test_benches(self, pattern="*", allow_empty=False):
+    def get_test_benches(self, pattern: str = "*", allow_empty: bool = False) -> list[TestBench]:
         """
         Get a list of test benches
 
@@ -37,7 +44,7 @@ class LibraryList(list):
         :param allow_empty: To disable an error when no test benches were found
         :returns: A list of :class:`.TestBench` objects
         """
-        results = []
+        results: list[TestBench] = []
         for library in self:
             results += library.get_test_benches(pattern, allow_empty=True)
 
@@ -47,7 +54,7 @@ class LibraryList(list):
             "No testbenches found within libraries",
         )
 
-    def set_generic(self, name, value, allow_empty=False):
+    def set_generic(self, name: str, value: Any, allow_empty: bool = False) -> None:
         """
         Set a value of generic within all |configurations| of test benches and tests in these libraries
 
@@ -73,7 +80,7 @@ class LibraryList(list):
         for library in self:
             library.set_generic(name, value, allow_empty=True)
 
-    def set_parameter(self, name, value, allow_empty=False):
+    def set_parameter(self, name: str, value: Any, allow_empty: bool = False) -> None:
         """
         Set a value of parameter within all |configurations| of test benches and tests in these libraries
 
@@ -99,7 +106,13 @@ class LibraryList(list):
         for library in self:
             library.set_parameter(name, value, allow_empty=True)
 
-    def set_sim_option(self, name, value, allow_empty=False, overwrite=True):
+    def set_sim_option(
+        self,
+        name: str,
+        value: Any,
+        allow_empty: bool = False,
+        overwrite: bool = True,
+    ) -> None:
         """
         Set simulation option within all |configurations| of test benches and tests in these libraries.
 
@@ -126,7 +139,7 @@ class LibraryList(list):
         for library in self:
             library.set_sim_option(name, value, allow_empty=True, overwrite=overwrite)
 
-    def get_source_files(self, pattern="*", allow_empty=False):
+    def get_source_files(self, pattern: str = "*", allow_empty: bool = False) -> SourceFileList:
         """
         Get a list of source files within these libraries
 
@@ -147,7 +160,7 @@ class LibraryList(list):
 
         return SourceFileList(results)
 
-    def set_compile_option(self, name, value, allow_empty=False):
+    def set_compile_option(self, name: str, value: Any, allow_empty: bool = False) -> None:
         """
         Set compile option for all files within these libraries
 
@@ -174,7 +187,7 @@ class LibraryList(list):
         for library in self:
             library.set_compile_option(name, value, allow_empty=True)
 
-    def add_compile_option(self, name, value, allow_empty=False):
+    def add_compile_option(self, name: str, value: Any, allow_empty: bool = False) -> None:
         """
         Add compile option to all files within these libraries
 
@@ -200,20 +213,26 @@ class Library(object):
     User interface of a library
     """
 
-    def __init__(self, library_name, parent, project: Project, test_bench_list):
+    def __init__(
+        self,
+        library_name: str,
+        parent: VUnit,
+        project: Project,
+        test_bench_list: TestBenchList,
+    ) -> None:
         self._library_name = library_name
         self._parent = parent
         self._project = project
         self._test_bench_list = test_bench_list
 
     @property
-    def name(self):
+    def name(self) -> str:
         """
         The name of the library
         """
         return self._library_name
 
-    def set_generic(self, name, value, allow_empty=False):
+    def set_generic(self, name: str, value: Any, allow_empty: bool = False) -> None:
         """
         Set a value of generic within all |configurations| of test benches and tests this library
 
@@ -233,7 +252,7 @@ class Library(object):
         for test_bench in self.get_test_benches(allow_empty=allow_empty):
             test_bench.set_generic(name.lower(), value)
 
-    def set_parameter(self, name, value, allow_empty=False):
+    def set_parameter(self, name: str, value: Any, allow_empty: bool = False) -> None:
         """
         Set a value of parameter within all |configurations| of test benches and tests this library
 
@@ -253,7 +272,13 @@ class Library(object):
         for test_bench in self.get_test_benches(allow_empty=allow_empty):
             test_bench.set_generic(name, value)
 
-    def set_sim_option(self, name, value, allow_empty=False, overwrite=True):
+    def set_sim_option(
+        self,
+        name: str,
+        value: Any,
+        allow_empty: bool = False,
+        overwrite: bool = True,
+    ) -> None:
         """
         Set simulation option within all |configurations| of test benches and tests this library
 
@@ -274,7 +299,7 @@ class Library(object):
         for test_bench in self.get_test_benches(allow_empty=allow_empty):
             test_bench.set_sim_option(name, value, overwrite)
 
-    def set_compile_option(self, name, value, allow_empty=False):
+    def set_compile_option(self, name: str, value: Any, allow_empty: bool = False) -> None:
         """
         Set compile option for all files within the library
 
@@ -295,7 +320,7 @@ class Library(object):
         for source_file in self.get_source_files(allow_empty=allow_empty):
             source_file.set_compile_option(name, value)
 
-    def add_compile_option(self, name, value, allow_empty=False):
+    def add_compile_option(self, name: str, value: Any, allow_empty: bool = False) -> None:
         """
         Add compile option to all files within the library
 
@@ -309,7 +334,7 @@ class Library(object):
         for source_file in self.get_source_files(allow_empty=allow_empty):
             source_file.add_compile_option(name, value)
 
-    def get_source_file(self, file_name):
+    def get_source_file(self, file_name: str) -> SourceFile:
         """
         Get a source file within this library
 
@@ -319,7 +344,7 @@ class Library(object):
         """
         return self._parent.get_source_file(file_name, self._library_name)
 
-    def get_source_files(self, pattern="*", allow_empty=False):
+    def get_source_files(self, pattern: str = "*", allow_empty: bool = False) -> SourceFileList:
         """
         Get a list of source files within this libary
 
@@ -331,15 +356,15 @@ class Library(object):
 
     def add_source_files(  # pylint: disable=too-many-arguments, too-many-positional-arguments
         self,
-        pattern,
-        preprocessors=None,
-        include_dirs=None,
-        defines=None,
-        allow_empty=False,
-        vhdl_standard: Optional[str] = None,
-        no_parse=False,
-        file_type=None,
-    ):
+        pattern: str | Path | Iterable[str | Path],
+        preprocessors: list[Preprocessor] | None = None,
+        include_dirs: list[str] | None = None,
+        defines: dict[str, str] | None = None,
+        allow_empty: bool = False,
+        vhdl_standard: str | None = None,
+        no_parse: bool = False,
+        file_type: str | None = None,
+    ) -> SourceFileList:
         """
         Add source files matching wildcard pattern to library
 
@@ -377,14 +402,14 @@ class Library(object):
 
     def add_source_file(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
-        file_name,
-        preprocessors=None,
-        include_dirs=None,
-        defines=None,
-        vhdl_standard: Optional[str] = None,
-        no_parse=False,
-        file_type=None,
-    ):
+        file_name: str | Path,
+        preprocessors: list[Preprocessor] | None = None,
+        include_dirs: list[str] | None = None,
+        defines: dict[str, str] | None = None,
+        vhdl_standard: str | None = None,
+        no_parse: bool = False,
+        file_type: str | None = None,
+    ) -> SourceFile:
         """
         Add source file to library
 
@@ -404,10 +429,10 @@ class Library(object):
            library.add_source_file("file.vhd")
 
         """
-        file_name = Path(file_name).resolve()
+        resolved_file_name = Path(file_name).resolve()
 
         if file_type is None:
-            file_type = file_type_of(file_name)
+            file_type = file_type_of(str(resolved_file_name))
         elif file_type not in FILE_TYPES:
             raise ValueError(f"file_type {file_type!r} not in {FILE_TYPES!r}")
 
@@ -416,7 +441,7 @@ class Library(object):
             include_dirs = add_verilog_include_dir(include_dirs)
 
         new_file_name = self._parent._preprocess(  # pylint: disable=protected-access
-            self._library_name, file_name, preprocessors
+            self._library_name, resolved_file_name, preprocessors
         )
 
         source_file = self._project.add_source_file(
@@ -429,13 +454,13 @@ class Library(object):
             no_parse=no_parse,
         )
         # To get correct tb_path generic
-        source_file.original_name = file_name
+        source_file.original_name = str(resolved_file_name)
 
         self._test_bench_list.add_from_source_file(source_file)
 
         return SourceFile(source_file, self._project, self._parent)
 
-    def package(self, name):
+    def package(self, name: str) -> PackageFacade:
         """
         Get a package within the library
         """
@@ -449,7 +474,7 @@ class Library(object):
 
         return PackageFacade(self._parent, self._library_name, name, design_unit)
 
-    def entity(self, name):
+    def entity(self, name: str) -> TestBench:
         """
         Get an entity within the library
 
@@ -464,7 +489,7 @@ class Library(object):
 
         return self.test_bench(name)
 
-    def module(self, name):
+    def module(self, name: str) -> TestBench:
         """
         Get a module within the library
 
@@ -478,7 +503,7 @@ class Library(object):
 
         return self.test_bench(name)
 
-    def test_bench(self, name):
+    def test_bench(self, name: str) -> TestBench:
         """
         Get a test bench within this library
 
@@ -490,7 +515,7 @@ class Library(object):
 
         return TestBench(self._test_bench_list.get_test_bench(self._library_name, name), self)
 
-    def get_test_benches(self, pattern="*", allow_empty=False):
+    def get_test_benches(self, pattern: str = "*", allow_empty: bool = False) -> list[TestBench]:
         """
         Get a list of test benches
 
@@ -498,9 +523,9 @@ class Library(object):
         :param allow_empty: To disable an error when no test benches were found
         :returns: A list of :class:`.TestBench` objects
         """
-        results = []
+        results: list[TestBench] = []
         for test_bench in self._test_bench_list.get_test_benches_in_library(self._library_name):
-            if not fnmatch(Path(test_bench.name).resolve(), pattern):
+            if not fnmatch(str(Path(test_bench.name).resolve()), pattern):
                 continue
 
             results.append(TestBench(test_bench, self))
@@ -511,7 +536,7 @@ class Library(object):
             f"No test benches found within library {self._library_name!s}",
         )
 
-    def _which_vhdl_standard(self, vhdl_standard: Optional[str]) -> VHDLStandard:
+    def _which_vhdl_standard(self, vhdl_standard: str | None) -> VHDLStandard:
         """
         Return default vhdl_standard if the argument is None
         The argument is a string from the user

@@ -9,12 +9,101 @@ Shared simulation logic between vsim based simulators such as ModelSim
 and RivieraPRO
 """
 
+from __future__ import annotations
+
 import sys
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Mapping, Protocol
 from ..ostools import write_file, Process
 from ..test.suites import get_result_file_name
 from ..persistent_tcl_shell import PersistentTclShell
+
+
+if TYPE_CHECKING:
+
+    class _VsimMixinHost(Protocol):  # pylint: disable=missing-function-docstring
+        """
+        Protocol describing the attributes and methods that ``VsimSimulatorMixin``
+        accesses via ``self``. It combines what the composing
+        :class:`SimulatorInterface` subclass provides with the attributes and
+        methods managed by ``VsimSimulatorMixin`` itself so that methods
+        annotated with ``self: _VsimMixinHost`` type-check.
+        """
+
+        # Provided by the composing SimulatorInterface subclass:
+        name: str
+        _gui: bool
+
+        @staticmethod
+        def get_env() -> Mapping[str, str] | None: ...
+
+        # Provided by the concrete simulator subclass (e.g. ModelSim/RivieraPRO):
+        def _create_load_function(  # pylint: disable=missing-function-docstring
+            self,
+            test_suite_name: str,
+            config: Any,
+            output_path: Any,
+            optimize_design: bool,
+        ) -> str: ...
+
+        def _create_run_function(self) -> str: ...
+
+        def _create_optimize_function(self, config: Any) -> str: ...
+
+        # Managed by VsimSimulatorMixin itself:
+        _prefix: str
+        _sim_cfg_file_name: str
+        _persistent_shell: PersistentTclShell | None
+
+        def _early_load_in_gui_mode(self) -> bool: ...
+
+        def _optimize_design(self, config: Any) -> bool: ...
+
+        def _optimize(self, config: Any, script_path: Any) -> bool: ...
+
+        def _get_gui_option(self) -> str: ...
+
+        def _get_load_flags(
+            self, config: Any, output_path: str, optimize_design: bool
+        ) -> list[str]: ...
+
+        def _create_init_files_after_load(self, config: Any) -> str: ...
+
+        def _create_init_files_before_run(self, config: Any) -> str: ...
+
+        def _create_user_init_function(self, config: Any) -> str: ...
+
+        def _create_common_script(  # pylint: disable=missing-function-docstring
+            self,
+            test_suite_name: str,
+            config: Any,
+            script_path: Any,
+            output_path: str,
+            *,
+            optimize_design: bool,
+        ) -> str: ...
+
+        def _create_gui_script(self, common_file_name: str, config: Any) -> str: ...
+
+        @staticmethod
+        def _create_batch_script(common_file_name: str, load_only: bool = False) -> str: ...
+
+        @staticmethod
+        def _create_restart_function(optimize_design: bool) -> str: ...
+
+        @staticmethod
+        def _source_tcl_file(file_name: str, config: Any, message: str) -> str: ...
+
+        def _run_batch_file(  # pylint: disable=missing-function-docstring
+            self,
+            batch_file_name: str,
+            gui: bool = False,
+            gui_option: str = "-gui",
+            extra_args: list[str] | None = None,
+        ) -> bool: ...
+
+        def _run_persistent(self, common_file_name: str, load_only: bool = False) -> bool: ...
 
 
 class VsimSimulatorMixin(object):
@@ -23,7 +112,12 @@ class VsimSimulatorMixin(object):
     simulators such as modelsim and rivierapro
     """
 
-    def __init__(self, prefix, persistent, sim_cfg_file_name):
+    def __init__(
+        self: "_VsimMixinHost",
+        prefix: str,
+        persistent: bool,
+        sim_cfg_file_name: str,
+    ) -> None:
         self._prefix = prefix
         sim_cfg_file_name = str(Path(sim_cfg_file_name).resolve())
         self._sim_cfg_file_name = sim_cfg_file_name
@@ -31,7 +125,7 @@ class VsimSimulatorMixin(object):
         prefix = self._prefix  # Avoid circular dependency inhibiting process destruction
         env = self.get_env()
 
-        def create_process(ident):
+        def create_process(ident: int | None) -> Process:
             return Process(
                 [
                     str(Path(prefix) / "vsim"),
@@ -45,13 +139,12 @@ class VsimSimulatorMixin(object):
                 env=env,
             )
 
-        if persistent:
-            self._persistent_shell = PersistentTclShell(create_process=create_process)
-        else:
-            self._persistent_shell = None
+        self._persistent_shell = (
+            PersistentTclShell(create_process=create_process) if persistent else None
+        )
 
     @staticmethod
-    def _create_restart_function(optimize_design):
+    def _create_restart_function(optimize_design: bool) -> str:
         """ "
         Create the vunit_restart function to recompile and restart the simulation
 
@@ -135,7 +228,15 @@ proc vunit_restart {} {
 """
         return tcl
 
-    def _create_common_script(self, test_suite_name, config, script_path, output_path, *, optimize_design):
+    def _create_common_script(
+        self: "_VsimMixinHost",
+        test_suite_name: str,
+        config: Any,
+        script_path: Any,
+        output_path: str,
+        *,
+        optimize_design: bool,
+    ) -> str:
         """
         Create tcl script with functions common to interactive and batch modes
         """
@@ -217,7 +318,7 @@ proc vunit_run {} {
         return tcl
 
     @staticmethod
-    def _create_batch_script(common_file_name, load_only=False):
+    def _create_batch_script(common_file_name: str, load_only: bool = False) -> str:
         """
         Create tcl script to run in batch mode
         """
@@ -232,7 +333,7 @@ proc vunit_run {} {
         batch_do += "quit -code 0\n"
         return batch_do
 
-    def _create_init_files_after_load(self, config):
+    def _create_init_files_after_load(self: "_VsimMixinHost", config: Any) -> str:
         """
         Create the _vunit_source_init_files_after_load function which sources the user defined TCL file in
         simulator_name.init_files.after_load
@@ -246,7 +347,7 @@ proc vunit_run {} {
         tcl += "}\n"
         return tcl
 
-    def _create_init_files_before_run(self, config):
+    def _create_init_files_before_run(self: "_VsimMixinHost", config: Any) -> str:
         """
         Create the _vunit_source_init_files_before_run function which sources the user defined TCL file in
         simulator_name.init_files.before_run
@@ -260,7 +361,7 @@ proc vunit_run {} {
         tcl += "}\n"
         return tcl
 
-    def _create_user_init_function(self, config):
+    def _create_user_init_function(self: "_VsimMixinHost", config: Any) -> str:
         """
         Create the vunit_user_init function which sources the user defined TCL file in
         simulator_name.init_file.gui
@@ -275,7 +376,7 @@ proc vunit_run {} {
         return tcl
 
     @staticmethod
-    def _source_tcl_file(file_name, config, message):
+    def _source_tcl_file(file_name: str, config: Any, message: str) -> str:
         """
         Create TCL to source a file and catch errors
         Also defines the vunit_tb_path variable as the config.tb_path
@@ -301,7 +402,7 @@ proc vunit_run {} {
         )
         return tcl
 
-    def _create_gui_script(self, common_file_name, config):
+    def _create_gui_script(self: "_VsimMixinHost", common_file_name: str, config: Any) -> str:
         """
         Create the user facing script which loads common functions and prints a help message
         """
@@ -314,7 +415,13 @@ proc vunit_run {} {
 
         return tcl
 
-    def _run_batch_file(self, batch_file_name, gui=False, gui_option="-gui", extra_args=None):
+    def _run_batch_file(
+        self: "_VsimMixinHost",
+        batch_file_name: str,
+        gui: bool = False,
+        gui_option: str = "-gui",
+        extra_args: list[str] | None = None,
+    ) -> bool:
         """
         Run a test bench in batch by invoking a new vsim process from the command line
         """
@@ -338,10 +445,13 @@ proc vunit_run {} {
             return False
         return True
 
-    def _run_persistent(self, common_file_name, load_only=False):
+    def _run_persistent(self: "_VsimMixinHost", common_file_name: str, load_only: bool = False) -> bool:
         """
         Run a test bench using the persistent vsim process
         """
+        if self._persistent_shell is None:
+            raise RuntimeError("Persistent TCL shell is not available")
+
         try:
             self._persistent_shell.execute(f'source "{fix_path(common_file_name)!s}"')
             self._persistent_shell.execute("set failed [vunit_load]")
@@ -357,19 +467,19 @@ proc vunit_run {} {
         except Process.NonZeroExitCode:
             return False
 
-    def _optimize_design(self, config):  # pylint: disable=unused-argument
+    def _optimize_design(self, config: Any) -> bool:  # pylint: disable=unused-argument
         """
         Return True if design shall be optimized.
         """
         return False
 
-    def _optimize(self, config, script_path):  # pylint: disable=unused-argument
+    def _optimize(self, config: Any, script_path: Any) -> bool:  # pylint: disable=unused-argument
         """
         Optimize design and return simulation target or False if optimization failed.
         """
         return False
 
-    def _early_load_in_gui_mode(self):  # pylint: disable=unused-argument
+    def _early_load_in_gui_mode(self) -> bool:  # pylint: disable=unused-argument
         """
         Return True if design is to be loaded on the first vsim call rather than
         in the second vsim call embedded in the script file.
@@ -378,7 +488,12 @@ proc vunit_run {} {
         """
         return False
 
-    def _get_load_flags(self, config, output_path, optimize_design):  # pylint: disable=unused-argument
+    def _get_load_flags(
+        self,
+        config: Any,  # pylint: disable=unused-argument
+        output_path: str,  # pylint: disable=unused-argument
+        optimize_design: bool,  # pylint: disable=unused-argument
+    ) -> list[str]:
         """
         Return extra flags needed for the first vsim call in GUI mode when early load is enabled.
 
@@ -386,7 +501,7 @@ proc vunit_run {} {
         """
         return []
 
-    def _get_gui_option(self):
+    def _get_gui_option(self) -> str:
         """
         Return the option used to start in GUI mode.
 
@@ -394,7 +509,13 @@ proc vunit_run {} {
         """
         return "-gui"
 
-    def simulate(self, output_path, test_suite_name, config, elaborate_only):
+    def simulate(
+        self: "_VsimMixinHost",
+        output_path: str,
+        test_suite_name: str,
+        config: Any,
+        elaborate_only: bool,
+    ) -> bool:
         """
         Run a test bench
         """
@@ -440,14 +561,14 @@ proc vunit_run {} {
         return self._run_batch_file(str(batch_file_name))
 
 
-def fix_path(path):
+def fix_path(path: str) -> str:
     """
     Adjust path for TCL usage
     """
     return path.replace("\\", "/").replace(" ", "\\ ")
 
 
-def get_is_test_suite_done_tcl(vunit_result_file):
+def get_is_test_suite_done_tcl(vunit_result_file: str) -> str:
     """
     Returns tcl procedure to detect if simulation was successful or not
     Simulation is considered successful if the test_suite_done was reached in the results file

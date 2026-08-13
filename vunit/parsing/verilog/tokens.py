@@ -8,18 +8,19 @@
 Verilog tokens
 """
 
-from typing import Dict
+from __future__ import annotations
+
 from vunit.parsing.tokenizer import new_token_kind, TokenKind
 
 
-def __token(kind):
+def __token(kind: str) -> TokenKind:
     """
     Create non keyword token kind
     """
     return new_token_kind(kind)
 
 
-def __keyword(kind):
+def __keyword(kind: str) -> TokenKind:
     """
     Create keyword token kind
     """
@@ -28,7 +29,7 @@ def __keyword(kind):
     return token_kind
 
 
-KEYWORDS: Dict[str, TokenKind] = {}
+KEYWORDS: dict[str, TokenKind] = {}
 
 PREPROCESSOR = __token("preprocessor")
 STRING = __token("string")

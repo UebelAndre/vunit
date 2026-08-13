@@ -8,11 +8,13 @@
 Provides documentation and version information
 """
 
+from __future__ import annotations
+
 import re
 from functools import total_ordering
 
 
-def license_text():
+def license_text() -> str:
     """
     Returns licence text
     """
@@ -40,7 +42,7 @@ The font used in VUnit's logo and illustrations is 'Tratex', the traffic sign ty
 """
 
 
-def doc():
+def doc() -> str:
     """
     Returns short introduction to VUnit
     """
@@ -62,7 +64,7 @@ welcome. Read our `contribution guide
     )
 
 
-def version():
+def version() -> str:
     """
     Returns VUnit version
     """

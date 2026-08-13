@@ -7,6 +7,8 @@
 """
 Module containing the CodecVHDLArrayType class.
 """
+from __future__ import annotations
+
 from string import Template
 from vunit.vhdl_parser import VHDLArrayType
 from vunit.com.codec_datatype_template import DatatypeCodecTemplate
@@ -16,7 +18,7 @@ class CodecVHDLArrayType(VHDLArrayType):
     """Class derived from VHDLArrayType to provide codec generator functionality constrained and
     unconstrained 1D/2D arrays"""
 
-    def generate_codecs_and_support_functions(self):
+    def generate_codecs_and_support_functions(self) -> tuple[str, str]:
         """Generate codecs and communication support functions for the array type."""
         template = ArrayCodecTemplate()
 
@@ -68,7 +70,7 @@ class CodecVHDLArrayType(VHDLArrayType):
 class ArrayCodecTemplate(DatatypeCodecTemplate):
     """This class contains array codec templates."""
 
-    constrained_1d_array_to_string_definition = Template(
+    constrained_1d_array_to_string_definition: Template = Template(
         """\
   function to_string (
     constant data : $type)
@@ -89,7 +91,7 @@ class ArrayCodecTemplate(DatatypeCodecTemplate):
 """
     )
 
-    constrained_2d_array_to_string_definition = Template(
+    constrained_2d_array_to_string_definition: Template = Template(
         """\
   function to_string (
     constant data : $type)
@@ -112,7 +114,7 @@ class ArrayCodecTemplate(DatatypeCodecTemplate):
 """
     )
 
-    unconstrained_1d_array_to_string_definition = Template(
+    unconstrained_1d_array_to_string_definition: Template = Template(
         """\
   function to_string (
     constant data : $array_type)
@@ -133,7 +135,7 @@ class ArrayCodecTemplate(DatatypeCodecTemplate):
 """
     )
 
-    unconstrained_2d_array_to_string_definition = Template(
+    unconstrained_2d_array_to_string_definition: Template = Template(
         """\
   function to_string (
     constant data : $array_type)
@@ -157,7 +159,7 @@ class ArrayCodecTemplate(DatatypeCodecTemplate):
 """
     )
 
-    constrained_1d_array_definition = Template(
+    constrained_1d_array_definition: Template = Template(
         """\
   function encode (
     constant data : $type)
@@ -218,7 +220,7 @@ class ArrayCodecTemplate(DatatypeCodecTemplate):
 """
     )
 
-    constrained_2d_array_definition = Template(
+    constrained_2d_array_definition: Template = Template(
         """\
   function encode (
     constant data : $type)
@@ -283,7 +285,7 @@ class ArrayCodecTemplate(DatatypeCodecTemplate):
 """
     )
 
-    unconstrained_1d_array_definition = Template(
+    unconstrained_1d_array_definition: Template = Template(
         """\
   function encode (
     constant data : $array_type)
@@ -379,7 +381,7 @@ class ArrayCodecTemplate(DatatypeCodecTemplate):
 """
     )
 
-    unconstrained_2d_array_definition = Template(
+    unconstrained_2d_array_definition: Template = Template(
         """\
   function encode (
     constant data : $array_type)

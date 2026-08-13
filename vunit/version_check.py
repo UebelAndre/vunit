@@ -8,13 +8,15 @@
 Check that the Python version used is supported by VUnit
 """
 
+from __future__ import annotations
+
 import sys
 
 MAJOR = 3
 MINOR = 6
 
 
-def version_is_ok():
+def version_is_ok() -> bool:
     """
     Returns true if version is high enough
     """

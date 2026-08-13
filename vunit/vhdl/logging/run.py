@@ -4,6 +4,8 @@
 #
 # Copyright (c) 2014-2026, Lars Asplund lars.anders.asplund@gmail.com
 
+from __future__ import annotations
+
 from os import getenv
 import glob
 from pathlib import Path
@@ -53,7 +55,7 @@ def main():
     tb = vunit_lib.test_bench("tb_sim_time_formatting")
     tb.set_generic("n_performance_iterations", args.performance_iterations)
 
-    test_vectors = []
+    test_vectors: list[list] = []
     native_unit_scaling = 0
     auto_unit_scaling = -1
     full_resolution = -1

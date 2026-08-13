@@ -34,6 +34,8 @@ has a ``parser`` field which is an `ArgumentParser` object of the
 
 """
 
+from __future__ import annotations
+
 import argparse
 import re
 import os
@@ -47,13 +49,13 @@ class VUnitCLI(object):
     VUnit command line interface
     """
 
-    def __init__(self, description=None):
+    def __init__(self, description: str | None = None) -> None:
         """
         :param description: A custom short description of the command line tool
         """
         self.parser = _create_argument_parser(description)
 
-    def parse_args(self, argv=None):
+    def parse_args(self, argv: list[str] | None = None) -> argparse.Namespace:
         """
         Parse command line arguments
 
@@ -63,7 +65,7 @@ class VUnitCLI(object):
         return self.parser.parse_args(args=argv)
 
 
-def _create_argument_parser(description=None, for_documentation=False):
+def _create_argument_parser(description: str | None = None, for_documentation: bool = False) -> argparse.ArgumentParser:
     """
     Create the argument parser
 
@@ -266,7 +268,7 @@ def _create_argument_parser(description=None, for_documentation=False):
 
     parser.add_argument("--version", action="version", version=version())
 
-    def valid_seed(value):
+    def valid_seed(value: str) -> str:
         value = value.lower()
 
         if value == "repeat":
@@ -295,19 +297,20 @@ def _create_argument_parser(description=None, for_documentation=False):
     return parser
 
 
-def nonnegative_int(val):
+def nonnegative_int(val: str) -> int:
     """
     ArgumentParse non-negative int check
     """
     try:
         ival = int(val)
-        assert ival >= 0
+        if ival < 0:
+            raise ValueError(f"{val} is negative")
         return ival
-    except (ValueError, AssertionError) as exv:
+    except ValueError as exv:
         raise argparse.ArgumentTypeError(f"'{val!s}' is not a valid non-negative int") from exv
 
 
-def _parser_for_documentation():
+def _parser_for_documentation() -> argparse.ArgumentParser:
     """
     Returns an argparse object used by sphinx for documentation in user_guide.rst
     """

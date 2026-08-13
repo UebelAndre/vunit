@@ -8,14 +8,19 @@
 Create simulator instances
 """
 
+from __future__ import annotations
+
+import argparse
 import os
+from typing import Any
+
 from .activehdl import ActiveHDLInterface
 from .ghdl import GHDLInterface
 from .incisive import IncisiveInterface
 from .modelsim import ModelSimInterface
 from .nvc import NVCInterface
 from .rivierapro import RivieraProInterface
-from . import BooleanOption, ListOfStringOption, VHDLAssertLevelOption, StringOption
+from . import BooleanOption, ListOfStringOption, Option, SimulatorInterface, VHDLAssertLevelOption, StringOption
 
 
 class SimulatorFactory(object):
@@ -24,7 +29,7 @@ class SimulatorFactory(object):
     """
 
     @staticmethod
-    def supported_simulators():
+    def supported_simulators() -> list[type[SimulatorInterface]]:
         """
         Return a list of supported simulator classes
         """
@@ -37,11 +42,11 @@ class SimulatorFactory(object):
             NVCInterface,
         ]
 
-    def _extract_compile_options(self):
+    def _extract_compile_options(self) -> dict[str, Option]:
         """
         Return all supported compile options
         """
-        result = dict((opt.name, opt) for opt in [BooleanOption("enable_coverage")])
+        result: dict[str, Option] = dict((opt.name, opt) for opt in [BooleanOption("enable_coverage")])
         for sim_class in self.supported_simulators():
             for opt in sim_class.compile_options:
                 assert hasattr(opt, "name")
@@ -51,11 +56,11 @@ class SimulatorFactory(object):
                 result[opt.name] = opt
         return result
 
-    def _extract_sim_options(self):
+    def _extract_sim_options(self) -> dict[str, Option]:
         """
         Return all supported sim options
         """
-        result = dict(
+        result: dict[str, Option] = dict(
             (opt.name, opt)
             for opt in [
                 VHDLAssertLevelOption(),
@@ -76,7 +81,7 @@ class SimulatorFactory(object):
 
         return result
 
-    def check_sim_option(self, name, value):
+    def check_sim_option(self, name: str, value: Any) -> None:
         """
         Check that sim_option has legal name and value
         """
@@ -87,7 +92,7 @@ class SimulatorFactory(object):
 
         self._sim_options[name].validate(value)
 
-    def check_compile_option_name(self, name):
+    def check_compile_option_name(self, name: str) -> None:
         """
         Check that the compile option is valid
         """
@@ -95,14 +100,14 @@ class SimulatorFactory(object):
         if name not in known_options:
             raise ValueError(f"Unknown compile_option {name!r}, expected one of {known_options!r}")
 
-    def check_compile_option(self, name, value):
+    def check_compile_option(self, name: str, value: Any) -> None:
         """
         Check that the compile option is valid
         """
         self.check_compile_option_name(name)
         self._compile_options[name].validate(value)
 
-    def select_simulator(self):
+    def select_simulator(self) -> type[SimulatorInterface] | None:
         """
         Select simulator class, either from VUNIT_SIMULATOR environment variable
         or the first available
@@ -129,7 +134,7 @@ class SimulatorFactory(object):
 
         return simulator_class
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """
         Add command line arguments to parser
         """
@@ -145,18 +150,18 @@ class SimulatorFactory(object):
         for sim in self.supported_simulators():
             sim.add_arguments(parser)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._compile_options = self._extract_compile_options()
         self._sim_options = self._extract_sim_options()
 
-    def _detect_available_simulators(self):
+    def _detect_available_simulators(self) -> list[type[SimulatorInterface]]:
         """
         Detect available simulators and return a list
         """
         return [simulator_class for simulator_class in self.supported_simulators() if simulator_class.is_available()]
 
     @property
-    def has_simulator(self):
+    def has_simulator(self) -> bool:
         return bool(self._detect_available_simulators())
 
 

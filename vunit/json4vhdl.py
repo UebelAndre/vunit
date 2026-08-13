@@ -8,7 +8,9 @@
 Removed functions.
 """
 
-from typing import Union
+from __future__ import annotations
+
+from typing import NoReturn, Union
 
 _REMOVAL_NOTICE = """\
 {function} has been removed. JSON-for-VHDL support is now provided through a separate package.
@@ -23,7 +25,7 @@ from vunit_json_for_vhdl import {function}
 """
 
 
-def encode_json(obj: object):  # pylint: disable=unused-argument
+def encode_json(obj: object) -> NoReturn:  # pylint: disable=unused-argument
     """
     Removed function.
     """
@@ -31,7 +33,7 @@ def encode_json(obj: object):  # pylint: disable=unused-argument
     raise RuntimeError(_REMOVAL_NOTICE.format(function=function))
 
 
-def read_json(filename: str):  # pylint: disable=unused-argument
+def read_json(filename: str) -> NoReturn:  # pylint: disable=unused-argument
     """
     Removed function.
     """
@@ -39,7 +41,7 @@ def read_json(filename: str):  # pylint: disable=unused-argument
     raise RuntimeError(_REMOVAL_NOTICE.format(function=function))
 
 
-def b16encode(data: Union[str, bytes]):  # pylint: disable=unused-argument
+def b16encode(data: Union[str, bytes]) -> NoReturn:  # pylint: disable=unused-argument
     """
     Removed function.
     """

@@ -8,14 +8,18 @@
 Interface for the Cadence Incisive simulator
 """
 
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
 from os.path import relpath
 import os
 import subprocess
 import logging
+from typing import Any
 from ..exceptions import CompileError
 from ..ostools import write_file, file_exists
-from ..vhdl_standard import VHDL
+from ..vhdl_standard import VHDL, VHDLStandard
 from . import SimulatorInterface, run_command, ListOfStringOption
 from .cds_file import CDSFile
 
@@ -39,7 +43,7 @@ class IncisiveInterface(SimulatorInterface):  # pylint: disable=too-many-instanc
     sim_options = [ListOfStringOption("incisive.irun_sim_flags")]
 
     @staticmethod
-    def add_arguments(parser):
+    def add_arguments(parser: argparse.ArgumentParser) -> None:
         """
         Add command line arguments
         """
@@ -56,7 +60,12 @@ class IncisiveInterface(SimulatorInterface):  # pylint: disable=too-many-instanc
         )
 
     @classmethod
-    def from_args(cls, args, output_path, **kwargs):
+    def from_args(
+        cls,
+        args: argparse.Namespace,
+        output_path: str,
+        **kwargs: Any,
+    ) -> "IncisiveInterface":
         """
         Create new instance from command line arguments object
         """
@@ -70,25 +79,34 @@ class IncisiveInterface(SimulatorInterface):  # pylint: disable=too-many-instanc
         )
 
     @classmethod
-    def find_prefix_from_path(cls):
+    def find_prefix_from_path(cls) -> str | None:
         """
         Find incisive simulator from PATH environment variable
         """
         return cls.find_toolchain(["irun"])
 
     @staticmethod
-    def supports_vhdl_contexts():
+    def supports_vhdl_contexts() -> bool:
         """
         Returns True when this simulator supports VHDL 2008 contexts
         """
         return False
 
     def __init__(  # pylint: disable=too-many-arguments
-        self, prefix, output_path, *, gui=False, log_level=None, cdslib=None, hdlvar=None
-    ):
+        self,
+        prefix: str | None,
+        output_path: str,
+        *,
+        gui: bool = False,
+        log_level: str | None = None,
+        cdslib: str | None = None,
+        hdlvar: str | None = None,
+    ) -> None:
         SimulatorInterface.__init__(self, output_path, gui)
-        self._prefix = prefix
-        self._libraries = []
+        if prefix is None:
+            raise RuntimeError("Incisive prefix not found")
+        self._prefix: str = prefix
+        self._libraries: list[Any] = []
         self._log_level = log_level
         if cdslib is None:
             self._cdslib = str((Path(output_path) / "cds.lib").resolve())
@@ -98,22 +116,24 @@ class IncisiveInterface(SimulatorInterface):  # pylint: disable=too-many-instanc
         self._cds_root_irun = self.find_cds_root_irun()
         self._create_cdslib()
 
-    def find_cds_root_irun(self):
+    def find_cds_root_irun(self) -> str:
         """
         Finds irun cds root
         """
-        return subprocess.check_output([str(Path(self._prefix) / "cds_root"), "irun"]).splitlines()[0]
+        output = subprocess.check_output([str(Path(self._prefix) / "cds_root"), "irun"]).splitlines()[0]
+        return output.decode() if isinstance(output, (bytes, bytearray)) else output
 
-    def find_cds_root_virtuoso(self):
+    def find_cds_root_virtuoso(self) -> str | None:
         """
         Finds virtuoso cds root
         """
         try:
-            return subprocess.check_output([str(Path(self._prefix) / "cds_root"), "virtuoso"]).splitlines()[0]
+            output = subprocess.check_output([str(Path(self._prefix) / "cds_root"), "virtuoso"]).splitlines()[0]
+            return output.decode() if isinstance(output, (bytes, bytearray)) else output
         except subprocess.CalledProcessError:
             return None
 
-    def _create_cdslib(self):
+    def _create_cdslib(self) -> None:
         """
         Create the cds.lib file in the output directory if it does not exist
         """
@@ -140,7 +160,7 @@ define work "{self._output_path}/libraries/work"
 
         write_file(self._cdslib, contents)
 
-    def setup_library_mapping(self, project):
+    def setup_library_mapping(self, project: Any) -> None:
         """
         Compile project using vhdl_standard
         """
@@ -150,7 +170,7 @@ define work "{self._output_path}/libraries/work"
             self._libraries.append(library)
             self.create_library(library.name, library.directory, mapped_libraries)
 
-    def compile_source_file_command(self, source_file):
+    def compile_source_file_command(self, source_file: Any) -> list[str]:
         """
         Returns the command to compile a single source file
         """
@@ -163,7 +183,7 @@ define work "{self._output_path}/libraries/work"
         raise CompileError
 
     @staticmethod
-    def _vhdl_std_opt(vhdl_standard):
+    def _vhdl_std_opt(vhdl_standard: VHDLStandard) -> str:
         """
         Convert standard to format of irun command line flag
         """
@@ -178,12 +198,12 @@ define work "{self._output_path}/libraries/work"
 
         raise ValueError(f"Invalid VHDL standard {vhdl_standard!s}")
 
-    def compile_vhdl_file_command(self, source_file):
+    def compile_vhdl_file_command(self, source_file: Any) -> list[str]:
         """
         Returns command to compile a VHDL file
         """
         cmd = str(Path(self._prefix) / "irun")
-        args = []
+        args: list[str] = []
         args += ["-compile"]
         args += ["-nocopyright"]
         args += ["-licqueue"]
@@ -208,12 +228,12 @@ define work "{self._output_path}/libraries/work"
         write_file(argsfile, "\n".join(args))
         return [cmd, "-f", argsfile]
 
-    def compile_verilog_file_command(self, source_file):
+    def compile_verilog_file_command(self, source_file: Any) -> list[str]:
         """
         Returns commands to compile a Verilog file
         """
         cmd = str(Path(self._prefix) / "irun")
-        args = []
+        args: list[str] = []
         args += ["-compile"]
         args += ["-nocopyright"]
         args += ["-licqueue"]
@@ -252,7 +272,12 @@ define work "{self._output_path}/libraries/work"
         write_file(argsfile, "\n".join(args))
         return [cmd, "-f", argsfile]
 
-    def create_library(self, library_name, library_path, mapped_libraries=None):
+    def create_library(
+        self,
+        library_name: str,
+        library_path: str,
+        mapped_libraries: dict[str, str] | None = None,
+    ) -> None:
         """
         Create and map a library_name to library_path
         """
@@ -270,7 +295,7 @@ define work "{self._output_path}/libraries/work"
         cds[library_name] = library_path
         cds.write(self._cdslib)
 
-    def _get_mapped_libraries(self):
+    def _get_mapped_libraries(self) -> CDSFile:
         """
         Get mapped libraries from cds.lib file
         """
@@ -278,7 +303,7 @@ define work "{self._output_path}/libraries/work"
         return cds
 
     @staticmethod
-    def _select_vhdl_top(config):
+    def _select_vhdl_top(config: Any) -> str:
         "Select VHDL configuration or entity as top."
         if config.vhdl_configuration_name is None:
             return f"{config.library_name!s}.{config.entity_name!s}:{config.architecture_name!s}"
@@ -286,8 +311,12 @@ define work "{self._output_path}/libraries/work"
         return f"{config.vhdl_configuration_name!s}"
 
     def simulate(
-        self, output_path, test_suite_name, config, elaborate_only=False
-    ):  # pylint: disable=too-many-locals,too-many-branches
+        self,
+        output_path: str,
+        test_suite_name: str,
+        config: Any,
+        elaborate_only: bool = False,
+    ) -> bool:  # pylint: disable=too-many-locals,too-many-branches
         """
         Elaborates and Simulates with entity as top level using generics
         """
@@ -302,7 +331,7 @@ define work "{self._output_path}/libraries/work"
 
         for step in steps:
             cmd = str(Path(self._prefix) / "irun")
-            args = []
+            args: list[str] = []
             if step == "elaborate":
                 args += ["-elaborate"]
             args += ["-nocopyright"]
@@ -358,7 +387,7 @@ define work "{self._output_path}/libraries/work"
                 return False
         return True
 
-    def _hdlvar_args(self):
+    def _hdlvar_args(self) -> list[str]:
         """
         Return hdlvar argument if available
         """
@@ -367,11 +396,11 @@ define work "{self._output_path}/libraries/work"
         return [f'-hdlvar "{self._hdlvar!s}"']
 
     @staticmethod
-    def _generic_args(entity_name, generics):
+    def _generic_args(entity_name: str, generics: dict[str, Any]) -> list[str]:
         """
         Create irun arguments for generics/parameters
         """
-        args = []
+        args: list[str] = []
         for name, value in generics.items():
             args += (
                 [f'''-gpg "{entity_name!s}.{name!s} => \\"{value!s}\\""''']
@@ -381,5 +410,5 @@ define work "{self._output_path}/libraries/work"
         return args
 
 
-def _generic_needs_quoting(value):  # pylint: disable=missing-docstring
+def _generic_needs_quoting(value: Any) -> bool:  # pylint: disable=missing-docstring
     return isinstance(value, (str, bool))
